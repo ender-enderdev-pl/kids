@@ -1,0 +1,16 @@
+{
+  "name": "Elf",
+  "short_name": "Elf",
+  "description": "Leśna platformówka Mai i Juli z 10 poziomami i kotkiem Luckiem.",
+  "lang": "pl",
+  "id": "./elf.html",
+  "start_url": "./elf.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#163c32",
+  "theme_color": "#163c32",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

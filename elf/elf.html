@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#163c32">
+  <meta name="description" content="Elf — gra Mai i Juli. 10 poziomów, cztery bronie i kotek Lucek z siedmioma życiami.">
+  <title>Elf</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brandmark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M9 4C28 6 28 26 9 28" stroke="#e8cb78" stroke-width="2.5"/><path d="M9 4L15 16 9 28" stroke="#d6dfb3" stroke-width="1.4"/><path d="M3 16H28M24 12L28 16 24 20" stroke="#e6edd0" stroke-width="1.8"/><path d="M3 12L7 16 3 20" stroke="#a9c783" stroke-width="2"/></svg></div>
+        <div><h1>Elf</h1><p class="tagline">Przygoda tylko naprzód</p></div>
+      </div>
+      <div class="top-actions">
+        <span class="edition">10 poziomów · 4 bronie · kotek</span>
+        <button class="icon-btn" id="soundBtn" title="Włącz / wyłącz dźwięk (M)" aria-label="Dźwięk" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path class="sound-wave" d="M15 8a6 6 0 010 8m3-11a10 10 0 010 14"/></svg></button>
+        <button class="icon-btn" id="pauseBtn" title="Pauza (P / Escape)" aria-label="Pauza"><svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke-width="3"/></svg></button>
+        <button class="icon-btn" id="fullBtn" title="Pełny ekran (F)" aria-label="Pełny ekran"><svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button>
+      </div>
+    </header>
+
+    <section class="game-frame" id="gameFrame" tabindex="0" aria-label="Elf. Ruch w lewo i w prawo: A i D lub strzałki. Kamera przewija tylko w prawo. Skok: spacja. Atak aktualną bronią: X lub J. Pauza: P.">
+      <canvas id="game" width="960" height="540" aria-label="Plansza gry: leśna platformówka z blondwłosą łuczniczką"></canvas>
+      <div class="hud">
+        <div class="hud-pill stage-pill"><div class="stage-counter"><span class="stage-num" id="stageNum">01</span><span id="stageTotal" class="stage-total">/ 10</span></div><div><div class="stage-name" id="stageName">Paprociowy szlak</div><div class="stage-progress"><span id="progressFill"></span></div></div></div>
+        <div class="hud-spacer"></div>
+        <div class="hud-pill coin-pill"><span class="coin-icon"></span><span id="coinCount">0</span></div>
+        <div class="hud-pill heart-pill" id="hearts" aria-label="Zdrowie: 3 z 3"></div>
+        <div class="hud-pill weapon-pill locked" id="weaponHud" aria-label="Brak broni"><svg id="weaponIcon" viewBox="0 0 28 28" aria-hidden="true"></svg><div class="weapon-readout"><span id="weaponName">BROŃ</span><b id="weaponAmmo">—</b></div></div>
+        <div class="hud-pill cat-pill locked" id="catHud" aria-label="Znajdź Lucka. Pozostało 7 żyć"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 14 4 3l11 7h3l10-7-2 12v9l-5 5H11l-6-5Z" fill="#20262c" stroke="#a7bbae" stroke-width="1.4"/><path d="M10 18h4m5 0h4" stroke="#f2d989" stroke-width="2.5"/><path d="m15 23 2 1 2-1" stroke="#b1c1b5" fill="none"/></svg><span id="catLives">×7</span></div>
+      </div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+      <div class="screen" id="introScreen">
+        <div class="intro-card">
+          <div class="eyebrow">Mała bohaterka. Wielki las.</div>
+          <h2>Przygoda<br><em>woła.</em></h2>
+          <p>Dziesięć zakątków lasu. Cztery bronie.<br>I mały, czarny Lucek z siedmioma życiami.</p>
+          <button class="primary" id="startBtn"><svg viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>Ruszaj w las<span style="opacity:.45;margin-left:auto;font-size:10px" class="desktop-hint">ENTER ↵</span></button>
+          <div class="intro-meta"><span><i>✦</i> 10 poziomów</span><span><i>✦</i> Wymienne moce</span></div>
+        </div>
+      </div>
+      <div class="screen modal-screen" id="modalScreen" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+          <div class="eyebrow" id="modalKicker"></div>
+          <h2 id="modalTitle"></h2>
+          <p id="modalText"></p>
+          <div class="modal-stats" id="modalStats"></div>
+          <button class="primary" id="modalPrimary"></button>
+          <button class="secondary" id="modalSecondary"></button>
+        </div>
+      </div>
+      <div class="touch-controls" id="touchControls">
+        <button class="touch-pause" id="touchPause" aria-label="Pauza"><svg viewBox="0 0 16 16"><path d="M5 3v10M11 3v10"/></svg></button>
+        <div class="touch-group movement"><button class="touch-btn" data-control="left" aria-label="Idź w lewo"><svg viewBox="0 0 28 28"><path d="M23 14H5M12 6l-8 8 8 8"/></svg></button><button class="touch-btn" data-control="right" aria-label="Idź w prawo"><svg viewBox="0 0 28 28"><path d="M5 14h18M16 6l8 8-8 8"/></svg></button></div>
+        <div class="touch-group"><button class="touch-btn shoot unavailable" id="shootTouch" data-control="shoot" aria-label="Atakuj"><svg id="attackTouchIcon" viewBox="0 0 28 28"><path d="M8 3c19 3 19 19 0 22M8 3l5 11-5 11M3 14h22m-4-4 4 4-4 4"/></svg></button><button class="touch-btn jump" data-control="jump" aria-label="Skacz"><svg viewBox="0 0 28 28"><path d="M14 23V5M6 13l8-9 8 9"/></svg></button></div>
+      </div>
+    </section>
+
+    <div class="legend" aria-label="Sterowanie">
+      <div class="legend-item"><div class="keycaps"><kbd>←</kbd><kbd>→</kbd></div><div><div class="legend-title">Ruch w obie strony</div><div class="legend-note">A / D · Kamera przewija tylko w prawo.</div></div></div>
+      <div class="legend-item"><div class="keycaps"><kbd>SPACJA</kbd></div><div><div class="legend-title">Wskocz w przygodę</div><div class="legend-note">Przytrzymaj, aby skoczyć wyżej.</div></div></div>
+      <div class="legend-item"><div class="keycaps"><kbd>X</kbd><kbd>J</kbd></div><div><div class="legend-title">Użyj swojej broni</div><div class="legend-note">X / J · Nowa broń zastępuje poprzednią.</div></div></div>
+    </div>
+    <section class="field-guide" aria-label="Broń i towarzysz">
+      <div class="guide-title">PO DRODZE ZNAJDZIESZ <span>Nowa broń zastępuje starą. Skucha odbiera broń i strzały.</span></div>
+      <div class="guide-grid">
+        <div class="guide-item"><b>01 / Łuk</b><span>12 strzał na start. Kołczany dają +8.</span></div>
+        <div class="guide-item"><b>02 / Kula ognia</b><span>Odbija się od ziemi. Bez amunicji.</span></div>
+        <div class="guide-item"><b>03 / Miecz</b><span>Cięcie z bliska. Uważaj na dystans.</span></div>
+        <div class="guide-item"><b>04 / Lodowy podmuch</b><span>Zamraża; drugi podmuch rozbija lód.</span></div>
+        <div class="guide-item cat-guide"><b>+ / Lucek</b><span>Przynosi znajdźki i atakuje. Przepaście oraz przeszkody zabierają mu życie. Każda znajdźka kotka przywraca 7 żyć.</span></div>
+      </div>
+    </section>
+    <footer class="bottomline"><span><b>Autorzy: Maja (9 lat) i Jula (7 lat).</b> <span class="desktop-hint">P / ESC — pauza · M — dźwięk · F — pełny ekran</span><span class="mobile-hint">Sterowanie przyciskami na ekranie.</span></span><span class="right-note" id="recordLabel">Wersja 3 · Kamera tylko w prawo. ↗</span></footer>
+  </main>
+
+<script src="game.js" defer></script>
+</body>
+</html>
