@@ -529,16 +529,21 @@ function showModal(kicker,title,text,primary,action,secondary='',secondaryCallba
   $('modalPrimary').textContent=primary;
   $('modalSecondary').textContent=secondary;
   $('modalSecondary').hidden=!secondary;
-  $('modalStats').replaceChildren();
+  const modalStats = $('modalStats');
+  // Chromium 53 supports appendChild/removeChild, but not append/replaceChildren.
+  // Clear previous results, including when switching to a dialog without stats.
+  while (modalStats.firstChild) modalStats.removeChild(modalStats.firstChild);
   for(const [value,label] of values) {
     const wrap=document.createElement('div');
     const number=document.createElement('span');
     const caption=document.createElement('span');
     number.className='stat-number'; number.textContent=value;
     caption.className='stat-label'; caption.textContent=label;
-    wrap.append(number,caption); $('modalStats').append(wrap);
+    wrap.appendChild(number);
+    wrap.appendChild(caption);
+    modalStats.appendChild(wrap);
   }
-  $('modalStats').hidden=!values.length;
+  modalStats.hidden=!values.length;
   primaryAction=action;
   secondaryAction=secondaryCallback;
   $('modalScreen').hidden=false;
