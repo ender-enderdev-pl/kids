@@ -11,6 +11,8 @@ const canvasContext = new Proxy({}, {
   }
 });
 const elements = new Map();
+const documentHandlers = new Map();
+const documentClasses = new Set();
 function element(id) {
   if (!elements.has(id)) {
     // Only expose APIs supported by Chromium 53; do not stub modern append()
@@ -45,11 +47,11 @@ function element(id) {
 
 const window = {matchMedia: () => ({matches: false}), addEventListener() {}};
 const document = {
-  documentElement: {classList: {toggle() {}}},
+  documentElement: {classList: {toggle(name, active) { if (active) documentClasses.add(name); else documentClasses.delete(name); }}},
   getElementById: element,
   createElement: () => element(Symbol()),
   querySelectorAll: () => [],
-  addEventListener() {}
+  addEventListener(type, listener) { documentHandlers.set(type, listener); }
 };
 const source = fs.readFileSync(path.join(__dirname, 'game.js'), 'utf8');
 const workerSource = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
@@ -64,7 +66,8 @@ assert.doesNotMatch(source, /\.replaceChildren\(|\.append\(/);
 assert.equal(typeof element('modalStats').replaceChildren, 'undefined');
 assert.equal(typeof element('modalStats').append, 'undefined');
 const legacyContext = vm.createContext({
-  window, document, navigator: {maxTouchPoints: 0},
+  window, document, HTMLButtonElement: class HTMLButtonElement {},
+  navigator: {maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (Web0S; Linux/SmartTV) webOS.TV-2017'},
   location: {search: '?test', protocol: 'file:'},
   localStorage: {getItem: () => null, setItem() {}},
   URLSearchParams, requestAnimationFrame() {},
@@ -85,6 +88,49 @@ for (const stage of game.stages) {
       `${stage.name}: ${kind} at ${x} must stand on ground`);
   }
 }
+
+// Emulate the numeric key codes supplied by old LG webOS remote controls.
+// In particular, remote events may have no usable KeyboardEvent.code.
+function sendRemote(type, keyCode, repeat = false) {
+  const listener = documentHandlers.get(type);
+  assert.ok(listener, type + ' listener is registered');
+  let prevented = false;
+  listener({
+    keyCode, code: 'Unidentified', repeat,
+    preventDefault() { prevented = true; }
+  });
+  return prevented;
+}
+assert.ok(documentClasses.has('tv-browser'), 'webOS browser uses the TV control legend');
+
+game.start();
+assert.ok(sendRemote('keydown', 404), 'green remote key is handled');
+game.updatePlayer(1 / 120);
+assert.ok(game.player.vx < 0 && game.player.vy < 0, 'green combines left with jump');
+sendRemote('keyup', 404);
+
+game.start();
+assert.ok(sendRemote('keydown', 405), 'yellow remote key is handled');
+game.updatePlayer(1 / 120);
+assert.ok(game.player.vx > 0 && game.player.vy < 0, 'yellow combines right with jump');
+sendRemote('keyup', 405);
+
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
+const ammoBeforeRemoteAttack = game.player.ammo;
+assert.ok(sendRemote('keydown', 403), 'red remote key is handled');
+game.updatePlayer(1 / 120);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'red fires the current weapon');
+sendRemote('keyup', 403);
+
+assert.ok(sendRemote('keydown', 406), 'blue remote key is handled');
+assert.equal(game.state, 'paused', 'blue pauses the game');
+sendRemote('keydown', 406, true);
+assert.equal(game.state, 'paused', 'repeating blue does not instantly unpause');
+sendRemote('keyup', 406);
+sendRemote('keydown', 406);
+assert.equal(game.state, 'playing', 'blue resumes the game');
+sendRemote('keyup', 406);
 
 game.start();
 // Picking up any of the four offensive power-ups must not freeze the game.
