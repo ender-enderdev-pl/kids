@@ -18,6 +18,8 @@ When served from HTTPS or `localhost`, Elf can also be installed as a PWA. After
 
 Move with **A / D** or **← / →**, jump with **Space**, **W**, or **↑**, and attack with **X** or **J**. On touch screens, use the on-screen controls. Press **P** or **Esc** to pause, **M** to toggle sound, and **F** for full screen.
 
+With a paired Joy-Con (R), hold it sideways: the stick moves, **A** or **SL** jumps, **X** or **SR** attacks, and **+** pauses. Press a controller button after opening the game so the browser can detect it. Other standard gamepads use the left stick or D-pad, **A** to jump, **X** or **RB** to attack, and **Start** to pause.
+
 ## License
 
 See [LICENSE](LICENSE) for the license terms.

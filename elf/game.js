@@ -61,6 +61,13 @@ let loot = [];
 let checkpointFlags = [];
 const keys = new Set();
 const touch = { left: false, right: false, jump: false, shoot: false };
+const gamepadInput = { left: false, right: false, jump: false, shoot: false };
+let activeGamepadIndex = -1;
+let activeGamepadId = '';
+let previousPadJump = false;
+let previousPadShoot = false;
+let previousPadConfirm = false;
+let previousPadPause = false;
 const pointerControls = new Map();
 // Retain short red-button presses until the next frame or weapon cooldown.
 let remoteShootBuffer = 0;
@@ -429,10 +436,88 @@ function loadStage(index, preserveEquipment = true) {
 // ========================================================================
 // A single colored remote button replaces simultaneous direction + jump.
 // The normal keyboard/touch controls remain unchanged.
-const isLeft = () => keys.has('ArrowLeft') || keys.has('KeyA') || keys.has('RemoteGreen') || touch.left;
-const isRight = () => keys.has('ArrowRight') || keys.has('KeyD') || keys.has('RemoteYellow') || touch.right;
-const isJump = () => keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW') || keys.has('RemoteGreen') || keys.has('RemoteYellow') || touch.jump;
-const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || keys.has('RemoteRed') || (IS_TV_BROWSER && keys.has('ArrowDown')) || touch.shoot;
+const isLeft = () => keys.has('ArrowLeft') || keys.has('KeyA') || keys.has('RemoteGreen') || touch.left || gamepadInput.left;
+const isRight = () => keys.has('ArrowRight') || keys.has('KeyD') || keys.has('RemoteYellow') || touch.right || gamepadInput.right;
+const isJump = () => keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW') || keys.has('RemoteGreen') || keys.has('RemoteYellow') || touch.jump || gamepadInput.jump;
+const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || keys.has('RemoteRed') || (IS_TV_BROWSER && keys.has('ArrowDown')) || touch.shoot || gamepadInput.shoot;
+
+function gamepadButton(pad, index) {
+  const button = pad.buttons && pad.buttons[index];
+  return !!(button && (button.pressed || button.value > .5 || button === 1));
+}
+
+function connectedGamepad() {
+  if (typeof navigator.getGamepads !== 'function') return null;
+  let pads;
+  try { pads = navigator.getGamepads(); } catch (_) { return null; }
+  if (!pads) return null;
+  let first = null;
+  for (const pad of pads) {
+    if (!pad || pad.connected === false) continue;
+    if (/Joy[ -]?Con.*(?:\(R\)|Right)/i.test(pad.id || '')) return pad;
+    if (!first) first = pad;
+  }
+  return first;
+}
+
+function pollGamepad() {
+  const pad = connectedGamepad();
+  if (!pad) {
+    gamepadInput.left = gamepadInput.right = gamepadInput.jump = gamepadInput.shoot = false;
+    if (activeGamepadIndex !== -1) $('gamepadHint').hidden = true;
+    activeGamepadIndex = -1;
+    activeGamepadId = '';
+    previousPadJump = previousPadShoot = previousPadConfirm = previousPadPause = false;
+    return;
+  }
+
+  const joyConRight = /Joy[ -]?Con.*(?:\(R\)|Right)/i.test(pad.id || '');
+  const rawJoyConRight = joyConRight && pad.mapping !== 'standard';
+  const justConnected = pad.index !== activeGamepadIndex || pad.id !== activeGamepadId;
+  if (justConnected) {
+    activeGamepadIndex = pad.index;
+    activeGamepadId = pad.id;
+    previousPadJump = previousPadShoot = previousPadConfirm = previousPadPause = false;
+    const hint = $('gamepadHint');
+    hint.textContent = joyConRight
+      ? 'Joy-Con (R): drążek — ruch · A / SL — skok · X / SR — atak · + — pauza'
+      : 'Pad: drążek — ruch · A — skok · X / RB — atak · Start — pauza';
+    hint.hidden = false;
+  }
+
+  const axes = pad.axes || [];
+  // Chromium maps a solo Joy-Con held sideways to axis 0. Android's unknown
+  // controller mapping keeps the right stick on axes 2/3; sideways movement
+  // is its inverted vertical axis. Some drivers expose it on axes 0/1.
+  const x = rawJoyConRight ? -(
+    Math.abs(axes[3] || 0) >= Math.abs(axes[1] || 0) ? (axes[3] || 0) : (axes[1] || 0)) :
+    Math.abs(axes[0] || 0) >= Math.abs(axes[2] || 0) ? (axes[0] || 0) : (axes[2] || 0);
+  gamepadInput.left = x < -.35 || gamepadButton(pad, 14);
+  gamepadInput.right = x > .35 || gamepadButton(pad, 15);
+  const jump = gamepadButton(pad, 0) || gamepadButton(pad, 4) ||
+    (rawJoyConRight && gamepadButton(pad, 1));
+  const shoot = rawJoyConRight
+    ? gamepadButton(pad, 2) || gamepadButton(pad, 3) || gamepadButton(pad, 5) || gamepadButton(pad, 7)
+    : gamepadButton(pad, 1) || gamepadButton(pad, 2) || gamepadButton(pad, 5) || gamepadButton(pad, 7);
+  const confirm = gamepadButton(pad, 0) || (rawJoyConRight && gamepadButton(pad, 1));
+  const pause = gamepadButton(pad, 9);
+  gamepadInput.jump = jump;
+  gamepadInput.shoot = shoot;
+  if (jump && !previousPadJump && state === 'playing') jumpBuffer = .14;
+  if (shoot && !previousPadShoot) bufferRemoteShoot();
+  if (pause && !previousPadPause) togglePause();
+  else if (confirm && !previousPadConfirm) {
+    if (state === 'title') startRun();
+    else if (['stageclear','win','gameover','paused'].includes(state) && primaryAction) primaryAction();
+  }
+  previousPadJump = jump;
+  previousPadShoot = shoot;
+  previousPadConfirm = confirm;
+  previousPadPause = pause;
+  if (justConnected && state === 'playing') showToast(joyConRight
+    ? 'Joy-Con: drążek — ruch · A / SL — skok\nX / SR — atak · + — pauza'
+    : 'Pad: drążek — ruch · A — skok\nX / RB — atak · Start — pauza', 4, true);
+}
 
 // Legacy LG webOS uses numeric TV key codes and may leave KeyboardEvent.code
 // empty or "Unidentified". Normalize these without losing desktop key codes.
@@ -523,6 +608,7 @@ function clearControls() {
   keys.clear();
   remoteShootBuffer = 0;
   touch.left = touch.right = touch.jump = touch.shoot = false;
+  gamepadInput.left = gamepadInput.right = gamepadInput.jump = gamepadInput.shoot = false;
   pointerControls.clear();
   jumpBuffer = 0;
   jumpWasHeld = false;
@@ -2375,6 +2461,7 @@ let runtimeFailed = false;
 function loop(timestamp) {
   if (runtimeFailed) return;
   try {
+    pollGamepad();
     const dt=lastTimestamp?Math.min((timestamp-lastTimestamp)/1000,.1):0;
     lastTimestamp=timestamp;
     if (!manualClock) {
@@ -2421,6 +2508,7 @@ if(new URLSearchParams(location.search).has('test')) {
     start:startRun,load:(index,preserve=false)=>{loadStage(index,preserve);resumeGame();},
     advance(seconds,draw=true){for(let i=0;i<Math.round(seconds/FIXED_STEP);i++)update(FIXED_STEP);if(draw)render();},
     input(control,down){if(control==='jump'&&down&&!touch.jump)jumpBuffer=.14;touch[control]=down;},
+    pollGamepad,get gamepadInput(){return gamepadInput;},
     freeze(value=true){manualClock=value;},render,shoot,hitBlock,hurtPlayer,respawn,finishStage,
     collectLoot,spawnLoot,clearControls,updateHUD,updateCompanion,updateItems,updatePlayer,updateProjectiles,updateAttacks,loseCatLife,
     solidAt,moveBody,resumeGame
