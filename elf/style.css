@@ -148,3 +148,18 @@ kbd{display:inline-flex;justify-content:center;align-items:center;height:28px;mi
   .legend-item { flex: 1 1 200px; }
   .guide-item { flex: 1 1 140px; }
 }
+
+/* Show real remote-control buttons instead of keyboard/touch hints on TVs.
+   The television's pointer capabilities cannot reliably identify its remote. */
+.tv-legend{display:none;margin-top:19px;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.tv-legend-item{display:flex;align-items:center;gap:9px;flex:1 1 170px;min-width:0}
+.tv-legend-item .legend-note{white-space:nowrap}
+.remote-color{display:inline-block;flex:none;width:29px;height:29px;border:2px solid rgba(18,39,29,.17);border-radius:50%;box-shadow:0 2px 0 rgba(20,46,48,.25)}
+.remote-green{background:#379d57}
+.remote-yellow{background:#efc841}
+.remote-red{background:#da514a}
+.remote-blue{background:#417bc4}
+html.tv-browser .keyboard-legend{display:none}
+html.tv-browser .tv-legend{display:flex}
+html.tv-browser .touch-controls{display:none}
+html.tv-browser .desktop-hint,html.tv-browser .mobile-hint{display:none}

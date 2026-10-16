@@ -1,6 +1,10 @@
 (() => {
 'use strict';
 document.documentElement.classList.toggle('has-touch', navigator.maxTouchPoints>0 || 'ontouchstart' in window);
+// webOS TV 2017 identifies itself as Web0S / SmartTV; keep remote hints
+// separate from the desktop keyboard and mobile touch interfaces.
+const IS_TV_BROWSER = /Web0S|webOS|SmartTV|HbbTV|NetCast\.TV|Tizen|BRAVIA|Viera/i.test(navigator.userAgent || '');
+document.documentElement.classList.toggle('tv-browser', IS_TV_BROWSER);
 // Elf v3 — self-contained offline browser platformer.
 // Campaign: 10 fixed levels. Movement: left/right; camera: forward only.
 // Damage: lose the active weapon, ammunition and temporary protection.
@@ -421,10 +425,22 @@ function loadStage(index, preserveEquipment = true) {
 // forward-only. Releasing movement brakes quickly. Jumping has an input
 // buffer, coyote time and variable height, independently of facing.
 // ========================================================================
-const isLeft = () => keys.has('ArrowLeft') || keys.has('KeyA') || touch.left;
-const isRight = () => keys.has('ArrowRight') || keys.has('KeyD') || touch.right;
-const isJump = () => keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW') || touch.jump;
-const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || touch.shoot;
+// A single colored remote button replaces simultaneous direction + jump.
+// The normal keyboard/touch controls remain unchanged.
+const isLeft = () => keys.has('ArrowLeft') || keys.has('KeyA') || keys.has('RemoteGreen') || touch.left;
+const isRight = () => keys.has('ArrowRight') || keys.has('KeyD') || keys.has('RemoteYellow') || touch.right;
+const isJump = () => keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW') || keys.has('RemoteGreen') || keys.has('RemoteYellow') || touch.jump;
+const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || keys.has('RemoteRed') || touch.shoot;
+
+// Legacy LG webOS uses numeric TV key codes and may leave KeyboardEvent.code
+// empty or "Unidentified". Normalize these without losing desktop key codes.
+const TV_REMOTE_CODES = {
+  13:'Enter', 37:'ArrowLeft', 38:'ArrowUp', 39:'ArrowRight', 40:'ArrowDown',
+  403:'RemoteRed', 404:'RemoteGreen', 405:'RemoteYellow', 406:'RemoteBlue'
+};
+function inputCode(event) {
+  return TV_REMOTE_CODES[event.keyCode] || event.code || event.key;
+}
 
 function clearControls() {
   keys.clear();
@@ -436,24 +452,35 @@ function clearControls() {
 }
 
 document.addEventListener('keydown', event => {
-  const relevant = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyX','KeyJ','KeyP','Escape','KeyM','KeyF','Enter'];
-  if (!relevant.includes(event.code)) return;
+  const code = inputCode(event);
+  const relevant = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyX','KeyJ','KeyP','Escape','KeyM','KeyF','Enter','RemoteRed','RemoteGreen','RemoteYellow','RemoteBlue'];
+  if (!relevant.includes(code)) return;
   // Do not hijack native Enter/Space activation when an actual button is
   // focused. Gameplay itself focuses the surrounding canvas frame.
-  if (document.activeElement instanceof HTMLButtonElement && ['Enter','Space'].includes(event.code) && state !== 'playing') return;
+  if (document.activeElement instanceof HTMLButtonElement && ['Enter','Space'].includes(code) && state !== 'playing') return;
   event.preventDefault();
+
+  // Handle blue even in the pause dialog. togglePause() clears game inputs,
+  // so remember the held remote key *after* the state transition.
+  if (code==='RemoteBlue') {
+    if (!keys.has(code) && !event.repeat) togglePause();
+    keys.add(code);
+    return;
+  }
+
   if (!event.repeat) {
-    if (event.code==='KeyM') { toggleSound(); return; }
-    if (event.code==='KeyF') { toggleFullscreen(); return; }
-    if (event.code==='KeyP' || event.code==='Escape') { togglePause(); return; }
-    if (state==='title' && ['Enter','Space'].includes(event.code)) { startRun(); return; }
-    if (['stageclear','win','gameover','paused'].includes(state) && event.code==='Enter') { if(primaryAction) primaryAction(); return; }
+    if (code==='KeyM') { toggleSound(); return; }
+    if (code==='KeyF') { toggleFullscreen(); return; }
+    if (code==='KeyP' || code==='Escape') { togglePause(); return; }
+    if (state==='title' && ['Enter','Space'].includes(code)) { startRun(); return; }
+    if (['stageclear','win','gameover','paused'].includes(state) && code==='Enter') { if(primaryAction) primaryAction(); return; }
   }
   if (state!=='playing') return;
-  if (!keys.has(event.code) && ['Space','ArrowUp','KeyW'].includes(event.code)) jumpBuffer=.14;
-  keys.add(event.code);
+  // Diagonal TV keys provide the same buffered jump as ArrowUp.
+  if (!keys.has(code) && ['Space','ArrowUp','KeyW','RemoteGreen','RemoteYellow'].includes(code)) jumpBuffer=.14;
+  keys.add(code);
 });
-document.addEventListener('keyup', event => keys.delete(event.code));
+document.addEventListener('keyup', event => keys.delete(inputCode(event)));
 
 document.querySelectorAll('[data-control]').forEach(button => {
   const control = button.dataset.control;
@@ -519,7 +546,7 @@ function startRun() {
   $('introScreen').hidden=true;
   $('modalScreen').hidden=true;
   frame.focus({preventScroll:true});
-  showToast('A / D lub ← / → — ruch   ·   SPACJA — skok',3.5,true);
+  showToast(IS_TV_BROWSER ? 'Pilot: ← / → — ruch · zielony ↖ / żółty ↗ — skok · czerwony — atak' : 'A / D lub ← / → — ruch   ·   SPACJA — skok',3.5,!IS_TV_BROWSER);
 }
 
 function showModal(kicker,title,text,primary,action,secondary='',secondaryCallback=null,values=[]) {
@@ -555,7 +582,10 @@ function showModal(kicker,title,text,primary,action,secondary='',secondaryCallba
 function pauseGame() {
   if(state!=='playing') return;
   state='paused';
-  showModal('Chwila pod paprocią','Las może poczekać.','A / D lub ← / → — ruch · SPACJA / W / ↑ — skok\nX / J — atak aktualną bronią. Na telefonie: przyciski.\nKamera przewija tylko w prawo. Skucha odbiera broń.\nŁuk: 12 strzał; kołczan: +8. Nowa broń zastępuje starą.\nLód: pierwszy podmuch zamraża, drugi pokonuje.\nLucek traci życie w przepaści i na przeszkodach. Każda jego znajdźka przywraca mu 7 żyć.','Wracaj na szlak →',resumeGame,'Rozpocznij od nowa',startRun);
+  const controls = IS_TV_BROWSER
+    ? 'Pilot: ← / → — ruch · ↑ — skok · zielony ↖ / żółty ↗ — skok z ruchem.\nCzerwony — atak · niebieski — pauza / wznowienie.'
+    : 'A / D lub ← / → — ruch · SPACJA / W / ↑ — skok\nX / J — atak aktualną bronią. Na telefonie: przyciski.';
+  showModal('Chwila pod paprocią','Las może poczekać.',controls+'\nKamera przewija tylko w prawo. Skucha odbiera broń.\nŁuk: 12 strzał; kołczan: +8. Nowa broń zastępuje starą.\nLód: pierwszy podmuch zamraża, drugi pokonuje.\nLucek traci życie w przepaści i na przeszkodach. Każda jego znajdźka przywraca mu 7 żyć.','Wracaj na szlak →',resumeGame,'Rozpocznij od nowa',startRun);
 }
 function resumeGame() {
   state='playing';
