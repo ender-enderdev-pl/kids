@@ -62,6 +62,8 @@ let checkpointFlags = [];
 const keys = new Set();
 const touch = { left: false, right: false, jump: false, shoot: false };
 const pointerControls = new Map();
+// Retain short red-button presses until the next frame or weapon cooldown.
+let remoteShootBuffer = 0;
 let jumpBuffer = 0;
 let jumpWasHeld = false;
 
@@ -439,11 +441,43 @@ const TV_REMOTE_CODES = {
   403:'RemoteRed', 404:'RemoteGreen', 405:'RemoteYellow', 406:'RemoteBlue'
 };
 function inputCode(event) {
-  return TV_REMOTE_CODES[event.keyCode] || event.code || event.key;
+  // Some TV browsers populate "which" but not "keyCode".
+  const numericCode = TV_REMOTE_CODES[event.keyCode] || TV_REMOTE_CODES[event.which];
+  if (numericCode) return numericCode;
+  if (event.code && event.code !== 'Unidentified') return event.code;
+  if (event.key === 'ColorF0Red' || event.key === 'Red') return 'RemoteRed';
+  return event.key || event.code;
+}
+
+// An opt-in on-screen key logger makes it possible to diagnose a browser
+// that intercepts a remote button before JavaScript ever receives the event.
+// Open the TV page with ?tvdebug=1 to show the latest keyboard events.
+const TV_INPUT_DEBUG = IS_TV_BROWSER && new URLSearchParams(location.search).has('tvdebug');
+const tvInputHistory = [];
+let tvInputPanel = null;
+if (TV_INPUT_DEBUG) {
+  tvInputPanel = document.createElement('div');
+  tvInputPanel.className = 'tv-input-debug';
+  tvInputPanel.setAttribute('aria-label', 'Diagnostyka przycisków pilota');
+  tvInputPanel.textContent = 'TV KEY DEBUG — wciśnij kolorowy przycisk';
+  frame.appendChild(tvInputPanel);
+}
+function traceTvInput(event, phase) {
+  if (!tvInputPanel) return;
+  tvInputHistory.push(phase + ': keyCode=' + event.keyCode +
+    ' which=' + event.which + ' code=' + event.code +
+    ' key=' + event.key + ' => ' + inputCode(event));
+  if (tvInputHistory.length > 5) tvInputHistory.shift();
+  tvInputPanel.textContent = tvInputHistory.join('\n');
+}
+
+function bufferRemoteShoot() {
+  if (state === 'playing') remoteShootBuffer = .24;
 }
 
 function clearControls() {
   keys.clear();
+  remoteShootBuffer = 0;
   touch.left = touch.right = touch.jump = touch.shoot = false;
   pointerControls.clear();
   jumpBuffer = 0;
@@ -452,6 +486,7 @@ function clearControls() {
 }
 
 document.addEventListener('keydown', event => {
+  traceTvInput(event, 'down');
   const code = inputCode(event);
   const relevant = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyX','KeyJ','KeyP','Escape','KeyM','KeyF','Enter','RemoteRed','RemoteGreen','RemoteYellow','RemoteBlue'];
   if (!relevant.includes(code)) return;
@@ -476,11 +511,28 @@ document.addEventListener('keydown', event => {
     if (['stageclear','win','gameover','paused'].includes(state) && code==='Enter') { if(primaryAction) primaryAction(); return; }
   }
   if (state!=='playing') return;
+  // Even a single-frame remote click must survive until the next update.
+  if (code==='RemoteRed' && !event.repeat) bufferRemoteShoot();
   // Diagonal TV keys provide the same buffered jump as ArrowUp.
   if (!keys.has(code) && ['Space','ArrowUp','KeyW','RemoteGreen','RemoteYellow'].includes(code)) jumpBuffer=.14;
   keys.add(code);
 });
-document.addEventListener('keyup', event => keys.delete(inputCode(event)));
+document.addEventListener('keyup', event => {
+  traceTvInput(event, 'up');
+  const code = inputCode(event);
+  // Some old remote implementations emit an up event without a matching
+  // down event. Only queue a shot if the key was not already held.
+  if (code === 'RemoteRed' && !keys.has(code)) bufferRemoteShoot();
+  keys.delete(code);
+});
+document.addEventListener('keypress', event => {
+  traceTvInput(event, 'press');
+  // An additional fallback for TV browsers that only deliver keypress.
+  if (inputCode(event) === 'RemoteRed') {
+    event.preventDefault();
+    bufferRemoteShoot();
+  }
+});
 
 document.querySelectorAll('[data-control]').forEach(button => {
   const control = button.dataset.control;
@@ -936,6 +988,7 @@ function respawn() {
 }
 
 function updatePlayer(dt) {
+  remoteShootBuffer=Math.max(0,remoteShootBuffer-dt);
   player.invincible=Math.max(0,player.invincible-dt);
   player.shield=Math.max(0,player.shield-dt);
   player.shootCooldown=Math.max(0,player.shootCooldown-dt);
@@ -967,7 +1020,14 @@ function updatePlayer(dt) {
   moveBody(player,dt,true);
   if (player.onGround && Math.abs(player.vx)>10) player.walk+=dt*11;
   else if (player.onGround) player.walk=0;
-  if (isShoot()) shoot();
+  if (isShoot() || remoteShootBuffer > 0) {
+    // Consume the buffered tap only when the weapon becomes ready, so
+    // short button presses during the pickup cooldown are not lost.
+    if (player.shootCooldown <= 0) {
+      shoot();
+      remoteShootBuffer = 0;
+    }
+  }
   // Resolve a freshly started sword/ice attack before checking body damage:
   // a successful close-range strike should protect the heroine immediately.
   updateAttacks(dt);

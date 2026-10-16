@@ -96,7 +96,7 @@ function sendRemote(type, keyCode, repeat = false) {
   assert.ok(listener, type + ' listener is registered');
   let prevented = false;
   listener({
-    keyCode, code: 'Unidentified', repeat,
+    keyCode, which: keyCode, code: 'Unidentified', repeat,
     preventDefault() { prevented = true; }
   });
   return prevented;
@@ -119,11 +119,31 @@ game.start();
 game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
 const ammoBeforeRemoteAttack = game.player.ammo;
 assert.ok(sendRemote('keydown', 403), 'red remote key is handled');
-// Newly equipped weapons have a short pickup cooldown. Holding red must
-// fire as soon as that cooldown elapses, without using the on-screen button.
+sendRemote('keyup', 403); // A very quick tap, released before any game frame.
+// Newly equipped weapons have a short pickup cooldown. The queued tap must
+// survive that cooldown even when the remote's keyup has already arrived.
 game.advance(.2, false);
-assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'red fires the current weapon');
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'short red tap fires after pickup');
+game.advance(.5, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'one tap fires only once');
+
+// A red button emitting only keyup should still cause exactly one shot.
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
 sendRemote('keyup', 403);
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'keyup-only remote fires');
+
+// Some old browser events expose the key using "which" instead.
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
+const redHandler = documentHandlers.get('keydown');
+redHandler({
+  keyCode: 0, which: 403, code: 'Unidentified', repeat: false,
+  preventDefault() {}
+});
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'which=403 fires');
 
 assert.ok(sendRemote('keydown', 406), 'blue remote key is handled');
 assert.equal(game.state, 'paused', 'blue pauses the game');
