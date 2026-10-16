@@ -1,4 +1,4 @@
-const CACHE_NAME = 'elf-offline-v9';
+const CACHE_NAME = 'elf-offline-v10';
 const APP_FILES = [
   './elf.html',
   './style.css',

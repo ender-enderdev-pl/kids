@@ -47,6 +47,11 @@ function element(id) {
 }
 
 const window = {matchMedia: () => ({matches: false}), addEventListener(type, listener, capture) { if (capture) windowHandlers.set(type, listener); }};
+const connectedPads = [];
+const navigator = {
+  maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (Web0S; Linux/SmartTV) webOS.TV-2017',
+  getGamepads: () => connectedPads
+};
 const document = {
   documentElement: {classList: {toggle(name, active) { if (active) documentClasses.add(name); else documentClasses.delete(name); }}},
   getElementById: element,
@@ -68,7 +73,7 @@ assert.equal(typeof element('modalStats').replaceChildren, 'undefined');
 assert.equal(typeof element('modalStats').append, 'undefined');
 const legacyContext = vm.createContext({
   window, document, HTMLButtonElement: class HTMLButtonElement {},
-  navigator: {maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (Web0S; Linux/SmartTV) webOS.TV-2017'},
+  navigator,
   location: {search: '?test', protocol: 'file:'},
   localStorage: {getItem: () => null, setItem() {}},
   URLSearchParams, requestAnimationFrame() {},
@@ -81,6 +86,64 @@ vm.runInContext(source, legacyContext, {filename: 'game.js', timeout: 10000});
 const game = window.__forestTest;
 assert.ok(game, 'test hook is available');
 assert.equal(game.stages.length, 10);
+
+// A single right Joy-Con can be exposed as a standard horizontal controller
+// or as raw Android axes/buttons. Test both profiles without a physical pad.
+const standardPad = {
+  id:'Joy-Con (R)', index:0, connected:true, mapping:'standard',
+  axes:[0,0,0,0], buttons:Array.from({length:17}, () => ({pressed:false}))
+};
+connectedPads[0] = standardPad;
+game.pollGamepad();
+assert.equal(element('gamepadHint').hidden, false, 'connected pad shows its controls');
+standardPad.buttons[0].pressed = true;
+game.pollGamepad();
+assert.equal(game.state, 'playing', 'A starts the game');
+standardPad.buttons[0].pressed = false;
+game.pollGamepad();
+standardPad.axes[0] = .8;
+standardPad.buttons[0].pressed = true;
+game.pollGamepad();
+game.updatePlayer(1 / 120);
+assert.ok(game.player.vx > 0 && game.player.vy < 0, 'standard stick and A move and jump');
+standardPad.buttons[0].pressed = false;
+standardPad.buttons[9].pressed = true;
+game.pollGamepad();
+assert.equal(game.state, 'paused', '+ pauses the game');
+game.pollGamepad();
+assert.equal(game.state, 'paused', 'holding + does not resume immediately');
+standardPad.buttons[9].pressed = false;
+game.pollGamepad();
+standardPad.buttons[9].pressed = true;
+game.pollGamepad();
+assert.equal(game.state, 'playing', 'a new + press resumes');
+
+const rawPad = {
+  id:'Nintendo Switch Joy-Con (R)', index:0, connected:true, mapping:'',
+  axes:[0,0,0,0], buttons:Array.from({length:17}, () => ({pressed:false}))
+};
+connectedPads[0] = rawPad;
+game.start();
+rawPad.axes[3] = 1;
+rawPad.buttons[1].pressed = true;
+game.pollGamepad();
+game.updatePlayer(1 / 120);
+assert.ok(game.player.vx < 0 && game.player.vy < 0, 'raw sideways stick and A move and jump');
+rawPad.buttons[1].pressed = false;
+rawPad.axes[3] = 0;
+game.collectLoot({kind:'bow', life:1, x:120, y:350});
+const shotsBeforePad = game.stats.shots;
+rawPad.buttons[2].pressed = true;
+game.pollGamepad();
+rawPad.buttons[2].pressed = false;
+game.pollGamepad();
+game.advance(.2, false);
+assert.equal(game.stats.shots, shotsBeforePad + 1, 'short raw X tap fires after weapon cooldown');
+connectedPads[0] = null;
+game.pollGamepad();
+assert.equal(game.gamepadInput.shoot, false, 'disconnect releases controls');
+assert.equal(element('gamepadHint').hidden, true, 'disconnect hides controller hint');
+
 for (const stage of game.stages) {
   for (const [x, kind] of stage.hazards) {
     const width = kind === 'spikes' ? 40 : kind === 'cactus' ? 30 : 32;
