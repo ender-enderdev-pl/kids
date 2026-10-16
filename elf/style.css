@@ -163,3 +163,11 @@ html.tv-browser .keyboard-legend{display:none}
 html.tv-browser .tv-legend{display:flex}
 html.tv-browser .touch-controls{display:none}
 html.tv-browser .desktop-hint,html.tv-browser .mobile-hint{display:none}
+
+
+/* Optional remote event trace for troubleshooting legacy TV browsers.
+   Enabled only by ?tvdebug=1, so it never overlays normal gameplay. */
+.tv-input-debug{position:absolute;z-index:9;left:12px;bottom:12px;
+  max-width:95%;padding:9px 12px;background:rgba(12,35,30,.91);
+  color:#f8f5d4;font:12px/1.45 monospace;white-space:pre-line;
+  border:1px solid #c8d5ab;border-radius:7px;pointer-events:none}
