@@ -432,7 +432,7 @@ function loadStage(index, preserveEquipment = true) {
 const isLeft = () => keys.has('ArrowLeft') || keys.has('KeyA') || keys.has('RemoteGreen') || touch.left;
 const isRight = () => keys.has('ArrowRight') || keys.has('KeyD') || keys.has('RemoteYellow') || touch.right;
 const isJump = () => keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW') || keys.has('RemoteGreen') || keys.has('RemoteYellow') || touch.jump;
-const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || keys.has('RemoteRed') || touch.shoot;
+const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || keys.has('RemoteRed') || (IS_TV_BROWSER && keys.has('ArrowDown')) || touch.shoot;
 
 // Legacy LG webOS uses numeric TV key codes and may leave KeyboardEvent.code
 // empty or "Unidentified". Normalize these without losing desktop key codes.
@@ -445,35 +445,79 @@ function inputCode(event) {
   const numericCode = TV_REMOTE_CODES[event.keyCode] || TV_REMOTE_CODES[event.which];
   if (numericCode) return numericCode;
   if (event.code && event.code !== 'Unidentified') return event.code;
-  if (event.key === 'ColorF0Red' || event.key === 'Red') return 'RemoteRed';
+  if (event.key === 'ColorF0Red' || event.key === 'Red' ||
+      event.code === 'ColorF0Red' || event.code === 'RemoteRed') return 'RemoteRed';
   return event.key || event.code;
 }
 
-// An opt-in on-screen key logger makes it possible to diagnose a browser
-// that intercepts a remote button before JavaScript ever receives the event.
-// Open the TV page with ?tvdebug=1 to show the latest keyboard events.
-const TV_INPUT_DEBUG = IS_TV_BROWSER && new URLSearchParams(location.search).has('tvdebug');
+// Temporarily show diagnostic counters on every TV, without requiring a
+// query parameter. The verbose event history remains opt-in (?tvdebug=1).
+// Comparing red key events with successful shots distinguishes intercepted
+// remote presses from game-side weapon cooldowns.
+const TV_INPUT_DEBUG = IS_TV_BROWSER || new URLSearchParams(location.search).has('tvdebug');
+const TV_VERBOSE_DEBUG = new URLSearchParams(location.search).has('tvdebug');
 const tvInputHistory = [];
+const tvInputCounts = {redDown:0,redUp:0};
 let tvInputPanel = null;
+let lastCapturedRedDown = null;
+let lastCapturedRedUp = null;
+let redDownCaptured = false;
 if (TV_INPUT_DEBUG) {
   tvInputPanel = document.createElement('div');
   tvInputPanel.className = 'tv-input-debug';
   tvInputPanel.setAttribute('aria-label', 'Diagnostyka przycisków pilota');
-  tvInputPanel.textContent = 'TV KEY DEBUG — wciśnij kolorowy przycisk';
   frame.appendChild(tvInputPanel);
+}
+function refreshTvDebug() {
+  if (!tvInputPanel) return;
+  const weapon = player && player.weapon ? player.weapon : 'brak';
+  const cooldown = player ? player.shootCooldown.toFixed(2) : '—';
+  tvInputPanel.textContent =
+    'PILOT | CZERWONY: down ' + tvInputCounts.redDown +
+    ' / up ' + tvInputCounts.redUp + ' | STRZAŁY: ' + stats.shots +
+    '\nBROŃ: ' + weapon + ' | cooldown: ' + cooldown + ' s' +
+    (tvInputHistory.length ? '\n' + tvInputHistory.join('\n') : '');
 }
 function traceTvInput(event, phase) {
   if (!tvInputPanel) return;
-  tvInputHistory.push(phase + ': keyCode=' + event.keyCode +
-    ' which=' + event.which + ' code=' + event.code +
-    ' key=' + event.key + ' => ' + inputCode(event));
-  if (tvInputHistory.length > 5) tvInputHistory.shift();
-  tvInputPanel.textContent = tvInputHistory.join('\n');
+  const code = inputCode(event);
+  if (code === 'RemoteRed' && phase === 'down') tvInputCounts.redDown++;
+  if (code === 'RemoteRed' && phase === 'up') tvInputCounts.redUp++;
+  // Keep a single last-event line on TVs. The ?tvdebug=1 switch expands
+  // this to five events with raw key codes to diagnose unexpected mappings.
+  tvInputHistory.push(phase + ': ' + code +
+    (TV_VERBOSE_DEBUG ? ' (keyCode=' + event.keyCode +
+    ', which=' + event.which + ', key=' + event.key + ')' : ''));
+  if (tvInputHistory.length > (TV_VERBOSE_DEBUG ? 5 : 1)) tvInputHistory.shift();
+  refreshTvDebug();
 }
+refreshTvDebug();
 
 function bufferRemoteShoot() {
-  if (state === 'playing') remoteShootBuffer = .24;
+  // The ice attack has an 0.82-second cooldown. Queue one tap long enough
+  // to fire after any weapon cooldown instead of losing quick remote clicks.
+  if (state === 'playing' && player && player.weapon) remoteShootBuffer = 1.0;
 }
+
+// On legacy TV browsers another script or element may swallow bubbling
+// events. Capture the red button at window level before those listeners.
+// Standard document listeners below remain the primary control handler.
+window.addEventListener('keydown', event => {
+  if (inputCode(event) !== 'RemoteRed') return;
+  lastCapturedRedDown = event;
+  redDownCaptured = true;
+  if (!event.repeat) bufferRemoteShoot();
+  traceTvInput(event, 'down');
+  event.preventDefault();
+}, true);
+window.addEventListener('keyup', event => {
+  if (inputCode(event) !== 'RemoteRed') return;
+  lastCapturedRedUp = event;
+  if (!redDownCaptured) bufferRemoteShoot(); // Keyup-only TV implementation.
+  redDownCaptured = false;
+  keys.delete('RemoteRed');
+  traceTvInput(event, 'up');
+}, true);
 
 function clearControls() {
   keys.clear();
@@ -486,8 +530,9 @@ function clearControls() {
 }
 
 document.addEventListener('keydown', event => {
-  traceTvInput(event, 'down');
   const code = inputCode(event);
+  // Do not count the same bubbling event twice after window capture.
+  if (code !== 'RemoteRed' || event !== lastCapturedRedDown) traceTvInput(event, 'down');
   const relevant = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyX','KeyJ','KeyP','Escape','KeyM','KeyF','Enter','RemoteRed','RemoteGreen','RemoteYellow','RemoteBlue'];
   if (!relevant.includes(code)) return;
   // Do not hijack native Enter/Space activation when an actual button is
@@ -512,23 +557,26 @@ document.addEventListener('keydown', event => {
   }
   if (state!=='playing') return;
   // Even a single-frame remote click must survive until the next update.
-  if (code==='RemoteRed' && !event.repeat) bufferRemoteShoot();
+  if (code==='RemoteRed' && !keys.has(code) && !event.repeat) bufferRemoteShoot();
+  if (code==='ArrowDown' && IS_TV_BROWSER && !keys.has(code) && !event.repeat) bufferRemoteShoot();
   // Diagonal TV keys provide the same buffered jump as ArrowUp.
   if (!keys.has(code) && ['Space','ArrowUp','KeyW','RemoteGreen','RemoteYellow'].includes(code)) jumpBuffer=.14;
   keys.add(code);
 });
 document.addEventListener('keyup', event => {
-  traceTvInput(event, 'up');
   const code = inputCode(event);
-  // Some old remote implementations emit an up event without a matching
-  // down event. Only queue a shot if the key was not already held.
-  if (code === 'RemoteRed' && !keys.has(code)) bufferRemoteShoot();
+  if (code !== 'RemoteRed' || event !== lastCapturedRedUp) {
+    traceTvInput(event, 'up');
+    // Keyup-only remotes can still request a shot, but do not queue a
+    // duplicate for an event already handled at window capture.
+    if (code === 'RemoteRed' && !keys.has(code)) bufferRemoteShoot();
+  }
   keys.delete(code);
 });
 document.addEventListener('keypress', event => {
   traceTvInput(event, 'press');
-  // An additional fallback for TV browsers that only deliver keypress.
-  if (inputCode(event) === 'RemoteRed') {
+  // Only queue keypress if it was not already handled via keydown.
+  if (inputCode(event) === 'RemoteRed' && !keys.has('RemoteRed')) {
     event.preventDefault();
     bufferRemoteShoot();
   }
@@ -904,6 +952,7 @@ function shoot() {
   player.shootCooldown=WEAPONS[kind].cooldown;
   player.shootPose=kind==='ice'?.3:.22;
   stats.shots++;
+  refreshTvDebug();
   if (kind==='bow') {
     player.ammo--;
     const width=30;
