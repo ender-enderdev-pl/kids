@@ -165,8 +165,8 @@ html.tv-browser .touch-controls{display:none}
 html.tv-browser .desktop-hint,html.tv-browser .mobile-hint{display:none}
 
 
-/* Optional remote event trace for troubleshooting legacy TV browsers.
-   Enabled only by ?tvdebug=1, so it never overlays normal gameplay. */
+/* Temporary visible remote diagnostics on all TV browsers; ?tvdebug=1
+   expands the raw event log. Turn off after confirming TV behavior. */
 .tv-input-debug{position:absolute;z-index:9;left:12px;bottom:12px;
   max-width:95%;padding:9px 12px;background:rgba(12,35,30,.91);
   color:#f8f5d4;font:12px/1.45 monospace;white-space:pre-line;

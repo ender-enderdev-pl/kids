@@ -12,6 +12,7 @@ const canvasContext = new Proxy({}, {
 });
 const elements = new Map();
 const documentHandlers = new Map();
+const windowHandlers = new Map();
 const documentClasses = new Set();
 function element(id) {
   if (!elements.has(id)) {
@@ -45,7 +46,7 @@ function element(id) {
   return elements.get(id);
 }
 
-const window = {matchMedia: () => ({matches: false}), addEventListener() {}};
+const window = {matchMedia: () => ({matches: false}), addEventListener(type, listener, capture) { if (capture) windowHandlers.set(type, listener); }};
 const document = {
   documentElement: {classList: {toggle(name, active) { if (active) documentClasses.add(name); else documentClasses.delete(name); }}},
   getElementById: element,
@@ -144,6 +145,43 @@ redHandler({
 });
 game.advance(.2, false);
 assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'which=403 fires');
+
+// When a focused element swallows the bubbling red key event, a capturing
+// window listener must still queue the shot. Simulate window capture only.
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
+assert.ok(windowHandlers.get('keydown'), 'TV keydown capture is registered');
+assert.ok(windowHandlers.get('keyup'), 'TV keyup capture is registered');
+windowHandlers.get('keydown')({
+  keyCode:403, which:403, code:'Unidentified', repeat:false, preventDefault() {}
+});
+windowHandlers.get('keyup')({
+  keyCode:403, which:403, code:'Unidentified', repeat:false, preventDefault() {}
+});
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'window capture fires without document bubbling');
+
+// Quick taps during the longest (ice) weapon cooldown are queued for its
+// next ready frame rather than being discarded after a 0.24-second buffer.
+game.start();
+game.collectLoot({kind:'ice', life:1, x:120, y:350});
+game.advance(.2, false);
+sendRemote('keydown',403);
+sendRemote('keyup',403);
+game.advance(.1, false);
+const beforeQueuedAttack = game.stats.shots;
+sendRemote('keydown',403);
+sendRemote('keyup',403);
+game.advance(.85, false);
+assert.equal(game.stats.shots, beforeQueuedAttack + 1, 'remote attack waits for ice cooldown');
+
+// TV Down is a reliable fallback when the browser reserves red.
+game.start();
+game.collectLoot({kind:'bow', life:1, x:120, y:350});
+sendRemote('keydown',40);
+sendRemote('keyup',40);
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'TV down fires as fallback');
 
 assert.ok(sendRemote('keydown', 406), 'blue remote key is handled');
 assert.equal(game.state, 'paused', 'blue pauses the game');
