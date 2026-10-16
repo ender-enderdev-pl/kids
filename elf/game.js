@@ -611,6 +611,7 @@ $('startBtn').addEventListener('click',startRun);
 $('pauseBtn').addEventListener('click',togglePause);
 $('touchPause').addEventListener('click',togglePause);
 $('soundBtn').addEventListener('click',toggleSound);
+$('touchSound').addEventListener('click',toggleSound);
 $('fullBtn').addEventListener('click',toggleFullscreen);
 $('modalPrimary').addEventListener('click', () => { if(primaryAction) primaryAction(); });
 $('modalSecondary').addEventListener('click', () => { if(secondaryAction) secondaryAction(); });
@@ -618,6 +619,7 @@ $('modalSecondary').addEventListener('click', () => { if(secondaryAction) second
 function toggleSound() {
   soundEnabled=!soundEnabled;
   $('soundBtn').setAttribute('aria-pressed',String(soundEnabled));
+  $('touchSound').setAttribute('aria-pressed',String(soundEnabled));
   if(soundEnabled) unlockAudio();
   if(audioMaster && audio) audioMaster.gain.setTargetAtTime(soundEnabled?.5:0,audio.currentTime,.02);
   if(state==='playing') frame.focus({preventScroll:true});
