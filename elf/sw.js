@@ -1,4 +1,4 @@
-const CACHE_NAME = 'elf-offline-v4';
+const CACHE_NAME = 'elf-offline-v8';
 const APP_FILES = [
   './elf.html',
   './style.css',
@@ -36,11 +36,10 @@ self.addEventListener('fetch', event => {
         event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)));
       }
       return response;
-    }).catch(async () => {
-      const cached = await caches.match(event.request);
+    }).catch(() => caches.match(event.request).then(cached => {
       if (cached) return cached;
       if (event.request.mode === 'navigate') return caches.match('./elf.html');
       return Response.error();
-    })
+    }))
   );
 });

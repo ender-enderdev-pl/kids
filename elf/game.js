@@ -1,6 +1,10 @@
 (() => {
 'use strict';
 document.documentElement.classList.toggle('has-touch', navigator.maxTouchPoints>0 || 'ontouchstart' in window);
+// webOS TV 2017 identifies itself as Web0S / SmartTV; keep remote hints
+// separate from the desktop keyboard and mobile touch interfaces.
+const IS_TV_BROWSER = /Web0S|webOS|SmartTV|HbbTV|NetCast\.TV|Tizen|BRAVIA|Viera/i.test(navigator.userAgent || '');
+document.documentElement.classList.toggle('tv-browser', IS_TV_BROWSER);
 // Elf v3 — self-contained offline browser platformer.
 // Campaign: 10 fixed levels. Movement: left/right; camera: forward only.
 // Damage: lose the active weapon, ammunition and temporary protection.
@@ -58,6 +62,8 @@ let checkpointFlags = [];
 const keys = new Set();
 const touch = { left: false, right: false, jump: false, shoot: false };
 const pointerControls = new Map();
+// Retain short red-button presses until the next frame or weapon cooldown.
+let remoteShootBuffer = 0;
 let jumpBuffer = 0;
 let jumpWasHeld = false;
 
@@ -421,13 +427,101 @@ function loadStage(index, preserveEquipment = true) {
 // forward-only. Releasing movement brakes quickly. Jumping has an input
 // buffer, coyote time and variable height, independently of facing.
 // ========================================================================
-const isLeft = () => keys.has('ArrowLeft') || keys.has('KeyA') || touch.left;
-const isRight = () => keys.has('ArrowRight') || keys.has('KeyD') || touch.right;
-const isJump = () => keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW') || touch.jump;
-const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || touch.shoot;
+// A single colored remote button replaces simultaneous direction + jump.
+// The normal keyboard/touch controls remain unchanged.
+const isLeft = () => keys.has('ArrowLeft') || keys.has('KeyA') || keys.has('RemoteGreen') || touch.left;
+const isRight = () => keys.has('ArrowRight') || keys.has('KeyD') || keys.has('RemoteYellow') || touch.right;
+const isJump = () => keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW') || keys.has('RemoteGreen') || keys.has('RemoteYellow') || touch.jump;
+const isShoot = () => keys.has('KeyX') || keys.has('KeyJ') || keys.has('RemoteRed') || (IS_TV_BROWSER && keys.has('ArrowDown')) || touch.shoot;
+
+// Legacy LG webOS uses numeric TV key codes and may leave KeyboardEvent.code
+// empty or "Unidentified". Normalize these without losing desktop key codes.
+const TV_REMOTE_CODES = {
+  13:'Enter', 37:'ArrowLeft', 38:'ArrowUp', 39:'ArrowRight', 40:'ArrowDown',
+  403:'RemoteRed', 404:'RemoteGreen', 405:'RemoteYellow', 406:'RemoteBlue'
+};
+function inputCode(event) {
+  // Some TV browsers populate "which" but not "keyCode".
+  const numericCode = TV_REMOTE_CODES[event.keyCode] || TV_REMOTE_CODES[event.which];
+  if (numericCode) return numericCode;
+  if (event.code && event.code !== 'Unidentified') return event.code;
+  if (event.key === 'ColorF0Red' || event.key === 'Red' ||
+      event.code === 'ColorF0Red' || event.code === 'RemoteRed') return 'RemoteRed';
+  return event.key || event.code;
+}
+
+// Temporarily show diagnostic counters on every TV, without requiring a
+// query parameter. The verbose event history remains opt-in (?tvdebug=1).
+// Comparing red key events with successful shots distinguishes intercepted
+// remote presses from game-side weapon cooldowns.
+const TV_INPUT_DEBUG = IS_TV_BROWSER || new URLSearchParams(location.search).has('tvdebug');
+const TV_VERBOSE_DEBUG = new URLSearchParams(location.search).has('tvdebug');
+const tvInputHistory = [];
+const tvInputCounts = {redDown:0,redUp:0};
+let tvInputPanel = null;
+let lastCapturedRedDown = null;
+let lastCapturedRedUp = null;
+let redDownCaptured = false;
+if (TV_INPUT_DEBUG) {
+  tvInputPanel = document.createElement('div');
+  tvInputPanel.className = 'tv-input-debug';
+  tvInputPanel.setAttribute('aria-label', 'Diagnostyka przycisków pilota');
+  frame.appendChild(tvInputPanel);
+}
+function refreshTvDebug() {
+  if (!tvInputPanel) return;
+  const weapon = player && player.weapon ? player.weapon : 'brak';
+  const cooldown = player ? player.shootCooldown.toFixed(2) : '—';
+  tvInputPanel.textContent =
+    'PILOT | CZERWONY: down ' + tvInputCounts.redDown +
+    ' / up ' + tvInputCounts.redUp + ' | STRZAŁY: ' + stats.shots +
+    '\nBROŃ: ' + weapon + ' | cooldown: ' + cooldown + ' s' +
+    (tvInputHistory.length ? '\n' + tvInputHistory.join('\n') : '');
+}
+function traceTvInput(event, phase) {
+  if (!tvInputPanel) return;
+  const code = inputCode(event);
+  if (code === 'RemoteRed' && phase === 'down') tvInputCounts.redDown++;
+  if (code === 'RemoteRed' && phase === 'up') tvInputCounts.redUp++;
+  // Keep a single last-event line on TVs. The ?tvdebug=1 switch expands
+  // this to five events with raw key codes to diagnose unexpected mappings.
+  tvInputHistory.push(phase + ': ' + code +
+    (TV_VERBOSE_DEBUG ? ' (keyCode=' + event.keyCode +
+    ', which=' + event.which + ', key=' + event.key + ')' : ''));
+  if (tvInputHistory.length > (TV_VERBOSE_DEBUG ? 5 : 1)) tvInputHistory.shift();
+  refreshTvDebug();
+}
+refreshTvDebug();
+
+function bufferRemoteShoot() {
+  // The ice attack has an 0.82-second cooldown. Queue one tap long enough
+  // to fire after any weapon cooldown instead of losing quick remote clicks.
+  if (state === 'playing' && player && player.weapon) remoteShootBuffer = 1.0;
+}
+
+// On legacy TV browsers another script or element may swallow bubbling
+// events. Capture the red button at window level before those listeners.
+// Standard document listeners below remain the primary control handler.
+window.addEventListener('keydown', event => {
+  if (inputCode(event) !== 'RemoteRed') return;
+  lastCapturedRedDown = event;
+  redDownCaptured = true;
+  if (!event.repeat) bufferRemoteShoot();
+  traceTvInput(event, 'down');
+  event.preventDefault();
+}, true);
+window.addEventListener('keyup', event => {
+  if (inputCode(event) !== 'RemoteRed') return;
+  lastCapturedRedUp = event;
+  if (!redDownCaptured) bufferRemoteShoot(); // Keyup-only TV implementation.
+  redDownCaptured = false;
+  keys.delete('RemoteRed');
+  traceTvInput(event, 'up');
+}, true);
 
 function clearControls() {
   keys.clear();
+  remoteShootBuffer = 0;
   touch.left = touch.right = touch.jump = touch.shoot = false;
   pointerControls.clear();
   jumpBuffer = 0;
@@ -436,24 +530,57 @@ function clearControls() {
 }
 
 document.addEventListener('keydown', event => {
-  const relevant = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyX','KeyJ','KeyP','Escape','KeyM','KeyF','Enter'];
-  if (!relevant.includes(event.code)) return;
+  const code = inputCode(event);
+  // Do not count the same bubbling event twice after window capture.
+  if (code !== 'RemoteRed' || event !== lastCapturedRedDown) traceTvInput(event, 'down');
+  const relevant = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyX','KeyJ','KeyP','Escape','KeyM','KeyF','Enter','RemoteRed','RemoteGreen','RemoteYellow','RemoteBlue'];
+  if (!relevant.includes(code)) return;
   // Do not hijack native Enter/Space activation when an actual button is
   // focused. Gameplay itself focuses the surrounding canvas frame.
-  if (document.activeElement instanceof HTMLButtonElement && ['Enter','Space'].includes(event.code) && state !== 'playing') return;
+  if (document.activeElement instanceof HTMLButtonElement && ['Enter','Space'].includes(code) && state !== 'playing') return;
   event.preventDefault();
+
+  // Handle blue even in the pause dialog. togglePause() clears game inputs,
+  // so remember the held remote key *after* the state transition.
+  if (code==='RemoteBlue') {
+    if (!keys.has(code) && !event.repeat) togglePause();
+    keys.add(code);
+    return;
+  }
+
   if (!event.repeat) {
-    if (event.code==='KeyM') { toggleSound(); return; }
-    if (event.code==='KeyF') { toggleFullscreen(); return; }
-    if (event.code==='KeyP' || event.code==='Escape') { togglePause(); return; }
-    if (state==='title' && ['Enter','Space'].includes(event.code)) { startRun(); return; }
-    if (['stageclear','win','gameover','paused'].includes(state) && event.code==='Enter') { if(primaryAction) primaryAction(); return; }
+    if (code==='KeyM') { toggleSound(); return; }
+    if (code==='KeyF') { toggleFullscreen(); return; }
+    if (code==='KeyP' || code==='Escape') { togglePause(); return; }
+    if (state==='title' && ['Enter','Space'].includes(code)) { startRun(); return; }
+    if (['stageclear','win','gameover','paused'].includes(state) && code==='Enter') { if(primaryAction) primaryAction(); return; }
   }
   if (state!=='playing') return;
-  if (!keys.has(event.code) && ['Space','ArrowUp','KeyW'].includes(event.code)) jumpBuffer=.14;
-  keys.add(event.code);
+  // Even a single-frame remote click must survive until the next update.
+  if (code==='RemoteRed' && !keys.has(code) && !event.repeat) bufferRemoteShoot();
+  if (code==='ArrowDown' && IS_TV_BROWSER && !keys.has(code) && !event.repeat) bufferRemoteShoot();
+  // Diagonal TV keys provide the same buffered jump as ArrowUp.
+  if (!keys.has(code) && ['Space','ArrowUp','KeyW','RemoteGreen','RemoteYellow'].includes(code)) jumpBuffer=.14;
+  keys.add(code);
 });
-document.addEventListener('keyup', event => keys.delete(event.code));
+document.addEventListener('keyup', event => {
+  const code = inputCode(event);
+  if (code !== 'RemoteRed' || event !== lastCapturedRedUp) {
+    traceTvInput(event, 'up');
+    // Keyup-only remotes can still request a shot, but do not queue a
+    // duplicate for an event already handled at window capture.
+    if (code === 'RemoteRed' && !keys.has(code)) bufferRemoteShoot();
+  }
+  keys.delete(code);
+});
+document.addEventListener('keypress', event => {
+  traceTvInput(event, 'press');
+  // Only queue keypress if it was not already handled via keydown.
+  if (inputCode(event) === 'RemoteRed' && !keys.has('RemoteRed')) {
+    event.preventDefault();
+    bufferRemoteShoot();
+  }
+});
 
 document.querySelectorAll('[data-control]').forEach(button => {
   const control = button.dataset.control;
@@ -496,16 +623,21 @@ function toggleSound() {
   if(state==='playing') frame.focus({preventScroll:true});
 }
 
-async function toggleFullscreen() {
+function toggleFullscreen() {
   try {
-    if(document.fullscreenElement) await document.exitFullscreen();
-    // An installed PWA already owns the screen. Requesting the Fullscreen API
-    // again makes Chrome cover the touch controls with its exit hint.
-    else if(window.matchMedia('(display-mode: fullscreen)').matches ||
-      ((window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) &&
+    // Legacy webOS may return undefined rather than a Promise for fullscreen.
+    let operation;
+    if (document.fullscreenElement && document.exitFullscreen) operation = document.exitFullscreen();
+    // Installed mobile apps already use the available screen. A second
+    // fullscreen request displays Chrome's hint over the touch controls.
+    else if (window.matchMedia('(display-mode: fullscreen)').matches ||
+        ((window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) &&
         (navigator.maxTouchPoints > 0 || 'ontouchstart' in window))) return;
-    else if(frame.requestFullscreen) await frame.requestFullscreen();
-    else showToast('Obróć telefon poziomo, aby powiększyć widok.');
+    else if (frame.requestFullscreen) operation = frame.requestFullscreen();
+    else { showToast('Obróć telefon poziomo, aby powiększyć widok.'); return; }
+    if (operation && typeof operation.catch === 'function') {
+      operation.catch(() => showToast('Pełny ekran jest niedostępny w tej przeglądarce.'));
+    }
   } catch (_) { showToast('Pełny ekran jest niedostępny w tej przeglądarce.'); }
 }
 
@@ -519,7 +651,7 @@ function startRun() {
   $('introScreen').hidden=true;
   $('modalScreen').hidden=true;
   frame.focus({preventScroll:true});
-  showToast('A / D lub ← / → — ruch   ·   SPACJA — skok',3.5,true);
+  showToast(IS_TV_BROWSER ? 'Pilot: ← / → — ruch · zielony ↖ / żółty ↗ — skok · czerwony — atak' : 'A / D lub ← / → — ruch   ·   SPACJA — skok',3.5,!IS_TV_BROWSER);
 }
 
 function showModal(kicker,title,text,primary,action,secondary='',secondaryCallback=null,values=[]) {
@@ -529,16 +661,21 @@ function showModal(kicker,title,text,primary,action,secondary='',secondaryCallba
   $('modalPrimary').textContent=primary;
   $('modalSecondary').textContent=secondary;
   $('modalSecondary').hidden=!secondary;
-  $('modalStats').replaceChildren();
+  const modalStats = $('modalStats');
+  // Chromium 53 supports appendChild/removeChild, but not append/replaceChildren.
+  // Clear previous results, including when switching to a dialog without stats.
+  while (modalStats.firstChild) modalStats.removeChild(modalStats.firstChild);
   for(const [value,label] of values) {
     const wrap=document.createElement('div');
     const number=document.createElement('span');
     const caption=document.createElement('span');
     number.className='stat-number'; number.textContent=value;
     caption.className='stat-label'; caption.textContent=label;
-    wrap.append(number,caption); $('modalStats').append(wrap);
+    wrap.appendChild(number);
+    wrap.appendChild(caption);
+    modalStats.appendChild(wrap);
   }
-  $('modalStats').hidden=!values.length;
+  modalStats.hidden=!values.length;
   primaryAction=action;
   secondaryAction=secondaryCallback;
   $('modalScreen').hidden=false;
@@ -550,7 +687,10 @@ function showModal(kicker,title,text,primary,action,secondary='',secondaryCallba
 function pauseGame() {
   if(state!=='playing') return;
   state='paused';
-  showModal('Chwila pod paprocią','Las może poczekać.','A / D lub ← / → — ruch · SPACJA / W / ↑ — skok\nX / J — atak aktualną bronią. Na telefonie: przyciski.\nKamera przewija tylko w prawo. Skucha odbiera broń.\nŁuk: 12 strzał; kołczan: +8. Nowa broń zastępuje starą.\nLód: pierwszy podmuch zamraża, drugi pokonuje.\nLucek traci życie w przepaści i na przeszkodach. Każda jego znajdźka przywraca mu 7 żyć.','Wracaj na szlak →',resumeGame,'Rozpocznij od nowa',startRun);
+  const controls = IS_TV_BROWSER
+    ? 'Pilot: ← / → — ruch · ↑ — skok · zielony ↖ / żółty ↗ — skok z ruchem.\nCzerwony — atak · niebieski — pauza / wznowienie.'
+    : 'A / D lub ← / → — ruch · SPACJA / W / ↑ — skok\nX / J — atak aktualną bronią. Na telefonie: przyciski.';
+  showModal('Chwila pod paprocią','Las może poczekać.',controls+'\nKamera przewija tylko w prawo. Skucha odbiera broń.\nŁuk: 12 strzał; kołczan: +8. Nowa broń zastępuje starą.\nLód: pierwszy podmuch zamraża, drugi pokonuje.\nLucek traci życie w przepaści i na przeszkodach. Każda jego znajdźka przywraca mu 7 żyć.','Wracaj na szlak →',resumeGame,'Rozpocznij od nowa',startRun);
 }
 function resumeGame() {
   state='playing';
@@ -733,7 +873,7 @@ function collectLoot(item,byCat=false) {
   item.life=0;
   if (byCat) stats.catFinds++;
   const prefix=byCat?'Lucek przynosi: ':'';
-  if (Object.hasOwn(WEAPONS,item.kind)) {
+  if (Object.prototype.hasOwnProperty.call(WEAPONS,item.kind)) {
     const previous=player.weapon;
     player.weapon=item.kind;
     if (item.kind==='bow') player.ammo=Math.min(MAX_ARROWS,player.ammo+ARROWS_PER_BOW);
@@ -817,6 +957,7 @@ function shoot() {
   player.shootCooldown=WEAPONS[kind].cooldown;
   player.shootPose=kind==='ice'?.3:.22;
   stats.shots++;
+  refreshTvDebug();
   if (kind==='bow') {
     player.ammo--;
     const width=30;
@@ -901,6 +1042,7 @@ function respawn() {
 }
 
 function updatePlayer(dt) {
+  remoteShootBuffer=Math.max(0,remoteShootBuffer-dt);
   player.invincible=Math.max(0,player.invincible-dt);
   player.shield=Math.max(0,player.shield-dt);
   player.shootCooldown=Math.max(0,player.shootCooldown-dt);
@@ -932,7 +1074,14 @@ function updatePlayer(dt) {
   moveBody(player,dt,true);
   if (player.onGround && Math.abs(player.vx)>10) player.walk+=dt*11;
   else if (player.onGround) player.walk=0;
-  if (isShoot()) shoot();
+  if (isShoot() || remoteShootBuffer > 0) {
+    // Consume the buffered tap only when the weapon becomes ready, so
+    // short button presses during the pickup cooldown are not lost.
+    if (player.shootCooldown <= 0) {
+      shoot();
+      remoteShootBuffer = 0;
+    }
+  }
   // Resolve a freshly started sword/ice attack before checking body damage:
   // a successful close-range strike should protect the heroine immediately.
   updateAttacks(dt);
@@ -1150,7 +1299,7 @@ function recallCompanion() {
   const ground=level.solids.filter(s=>s.type==='ground' && s.x+s.w-companion.w>=Math.max(s.x,camera+4));
   const nearest=ground.map(s=>clamp(desired,Math.max(s.x,camera+4),s.x+s.w-companion.w))
     .sort((a,b)=>Math.abs(a-desired)-Math.abs(b-desired))[0];
-  companion.x=nearest ?? desired;
+  companion.x=nearest == null ? desired : nearest;
   companion.y=GROUND-companion.h-12;
   companion.vx=companion.vy=0;
   companion.pounce=0;
@@ -1302,7 +1451,7 @@ function updateHUD() {
   const key=[stageIndex,stats.coins,player.health,player.weapon,player.ammo,!!companion,catLives].join('|');
   if (key===lastHudKey) return;
   lastHudKey=key;
-  $('stageNum').textContent=String(stageIndex+1).padStart(2,'0');
+  $('stageNum').textContent=('0'+(stageIndex+1)).slice(-2);
   $('stageName').textContent=STAGES[stageIndex].name;
   $('stageTotal').textContent=`/ ${STAGES.length}`;
   $('coinCount').textContent=String(stats.coins);
@@ -1319,7 +1468,7 @@ function updateHUD() {
   $('weaponName').textContent=weapon?weapon.short:'BROŃ';
   $('weaponAmmo').textContent=weapon?(player.weapon==='bow'?String(player.ammo):'∞'):'—';
   $('weaponIcon').innerHTML=WEAPON_ICONS[player.weapon || 'none'];
-  $('weaponHud').style.color=weapon?.color || '#d9e1bf';
+  $('weaponHud').style.color=(weapon && weapon.color) || '#d9e1bf';
   $('shootTouch').classList.toggle('unavailable',!available);
   $('shootTouch').setAttribute('aria-label',weapon?'Atak: '+weapon.label:'Atak — najpierw zdobądź broń');
   $('attackTouchIcon').innerHTML=WEAPON_ICONS[player.weapon || 'sword'];
@@ -1534,7 +1683,7 @@ function drawTerrain(solid) {
       const ww=16+r()*17;
       const hh=9+r()*13;
       pixelBlob(ctx,xx,yy,ww,hh,r()>.55?p.earthDark:'#92704d');
-      rect(ctx,xx+4,yy+2,ww-8,2,'#b796653b');
+      rect(ctx,xx+4,yy+2,ww-8,2,'rgba(183,150,101,0.2314)');
       if(r()>.65) rect(ctx,xx+23,yy+20,4,3,p.earthDark);
     }
   }
@@ -1646,10 +1795,10 @@ function drawBlock(block) {
       rect(ctx,x+11+col*3,y+8+row*3,3,3,'#fff0ba');
     }
     if(special) {
-      rect(ctx,x+11,y+34,18,2,WEAPONS[block.content]?.color || (block.content==='cat'?'#35443d':'#e5dfbd'));
+      rect(ctx,x+11,y+34,18,2,(WEAPONS[block.content] && WEAPONS[block.content].color) || (block.content==='cat'?'#35443d':'#e5dfbd'));
       const glint=REDUCED_MOTION?1:Math.sin(worldTime*4)*.3+.7;
       ctx.globalAlpha=glint;
-      drawSpark(x+36,y-7,4,WEAPONS[block.content]?.color || '#fff3bf');
+      drawSpark(x+36,y-7,4,(WEAPONS[block.content] && WEAPONS[block.content].color) || '#fff3bf');
       ctx.globalAlpha=1;
     }
   }
@@ -1786,7 +1935,7 @@ function drawLoot(item) {
   const x=item.x-camera;
   if (x<-60 || x>viewWidth+60) return;
   const y=item.y+(REDUCED_MOTION?0:Math.sin(worldTime*5)*2);
-  const color=WEAPONS[item.kind]?.color || (item.kind==='cat'?'#f1deb1':'#e7f0b4');
+  const color=(WEAPONS[item.kind] && WEAPONS[item.kind].color) || (item.kind==='cat'?'#f1deb1':'#e7f0b4');
   ctx.globalAlpha=.19;pixelBlob(ctx,x-8,y-7,43,42,color);ctx.globalAlpha=1;
   if (item.kind==='bow') drawBow(x+5,y+14,1.1,true);
   else if (item.kind==='fire') drawFlame(x+12,y+13,.93);
@@ -1895,7 +2044,7 @@ function drawEnemy(enemy) {
   ctx.translate(0,-enemy.h);
   const bob=enemy.alive?Math.round(Math.sin(enemy.phase)*1):0;
   const leg=Math.sin(enemy.phase)>0?1:0;
-  rect(ctx,5,25,28,4,'#243d353b');
+  rect(ctx,5,25,28,4,'rgba(36,61,53,0.2314)');
   if(enemy.kind==='mushroom') {
     rect(ctx,8,20,9,7+leg,'#3b4c34');rect(ctx,24,20,9,8-leg,'#3b4c34');
     pixelBlob(ctx,9,9+bob,24,15,'#ddd7a7');
@@ -2196,7 +2345,7 @@ function render() {
   // The bottom edge gets a subtle vignette, while the collision surface
   // remains crisp and readable above it.
   const shade=ctx.createLinearGradient(0,475,0,540);
-  shade.addColorStop(0,'#16362900');shade.addColorStop(1,'#1636293b');
+  shade.addColorStop(0,'rgba(22,54,41,0)');shade.addColorStop(1,'rgba(22,54,41,0.2314)');
   ctx.fillStyle=shade;ctx.fillRect(0,475,viewWidth,65);
   ctx.restore();
 }
@@ -2220,16 +2369,28 @@ function resize() {
 let lastTimestamp=0;
 let accumulator=0;
 let manualClock=false;
+let runtimeFailed = false;
 function loop(timestamp) {
-  const dt=lastTimestamp?Math.min((timestamp-lastTimestamp)/1000,.1):0;
-  lastTimestamp=timestamp;
-  if(!manualClock) {
-    accumulator+=dt;
-    let steps=0;
-    while(accumulator>=FIXED_STEP && steps<12) {update(FIXED_STEP);accumulator-=FIXED_STEP;steps++;}
-    if(steps>=12)accumulator=0;
+  if (runtimeFailed) return;
+  try {
+    const dt=lastTimestamp?Math.min((timestamp-lastTimestamp)/1000,.1):0;
+    lastTimestamp=timestamp;
+    if (!manualClock) {
+      accumulator+=dt;
+      let steps=0;
+      while(accumulator>=FIXED_STEP && steps<12) {update(FIXED_STEP);accumulator-=FIXED_STEP;steps++;}
+      if (steps>=12) accumulator=0;
+    }
+    render();
+  } catch (error) {
+    // Surface runtime faults on televisions that have no convenient console.
+    runtimeFailed = true;
+    console.error('Elf runtime error:',error);
+    const warning = $('toast');
+    warning.textContent = 'Błąd gry: ' + (error && error.message ? error.message : String(error));
+    warning.classList.add('show');
+    return;
   }
-  render();
   requestAnimationFrame(loop);
 }
 

@@ -11,33 +11,72 @@ const canvasContext = new Proxy({}, {
   }
 });
 const elements = new Map();
+const documentHandlers = new Map();
+const windowHandlers = new Map();
+const documentClasses = new Set();
 function element(id) {
-  if (!elements.has(id)) elements.set(id, {
-    style: {}, hidden: false, textContent: '', innerHTML: '',
-    classList: {add() {}, remove() {}, toggle() {}},
-    addEventListener() {}, setAttribute() {}, replaceChildren() {}, append() {}, focus() {},
-    getBoundingClientRect() { return {width: 960, height: 540}; },
-    getContext() { return canvasContext; }
-  });
+  if (!elements.has(id)) {
+    // Only expose APIs supported by Chromium 53; do not stub modern append()
+    // or replaceChildren(), so incompatible dialogs fail this regression test.
+    const children = [];
+    const listeners = new Map();
+    elements.set(id, {
+      children, listeners,
+      style: {}, hidden: false, textContent: '', innerHTML: '',
+      get firstChild() { return children.length ? children[0] : null; },
+      appendChild(child) { children.push(child); return child; },
+      removeChild(child) {
+        const index = children.indexOf(child);
+        assert.notEqual(index, -1, 'removed node must be a child');
+        children.splice(index, 1);
+        return child;
+      },
+      classList: {add() {}, remove() {}, toggle() {}},
+      addEventListener(type, listener) { listeners.set(type, listener); },
+      click() {
+        const listener = listeners.get('click');
+        assert.ok(listener, 'click handler is registered');
+        listener();
+      },
+      setAttribute() {}, focus() {},
+      getBoundingClientRect() { return {width: 960, height: 540}; },
+      getContext() { return canvasContext; }
+    });
+  }
   return elements.get(id);
 }
 
-const window = {matchMedia: () => ({matches: false}), addEventListener() {}};
+const window = {matchMedia: () => ({matches: false}), addEventListener(type, listener, capture) { if (capture) windowHandlers.set(type, listener); }};
 const document = {
-  documentElement: {classList: {toggle() {}}},
+  documentElement: {classList: {toggle(name, active) { if (active) documentClasses.add(name); else documentClasses.delete(name); }}},
   getElementById: element,
   createElement: () => element(Symbol()),
   querySelectorAll: () => [],
-  addEventListener() {}
+  addEventListener(type, listener) { documentHandlers.set(type, listener); }
 };
 const source = fs.readFileSync(path.join(__dirname, 'game.js'), 'utf8');
-vm.runInNewContext(source, {
-  window, document, navigator: {maxTouchPoints: 0},
+const workerSource = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
+const cssSource = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
+// Chromium 53 must parse the complete scripts before any animation can start.
+assert.doesNotMatch(source, /Object\.hasOwn\(|\.padStart\(|\?\.(?=[A-Za-z_$\[])/);
+assert.doesNotMatch(source, /\?\?(?!\?)/);
+assert.doesNotMatch(source, /\basync\s+function\b/);
+assert.doesNotMatch(workerSource, /\basync\b|\bawait\b/);
+assert.doesNotMatch(source + cssSource, /#[0-9a-fA-F]{8}\b/);
+assert.doesNotMatch(source, /\.replaceChildren\(|\.append\(/);
+assert.equal(typeof element('modalStats').replaceChildren, 'undefined');
+assert.equal(typeof element('modalStats').append, 'undefined');
+const legacyContext = vm.createContext({
+  window, document, HTMLButtonElement: class HTMLButtonElement {},
+  navigator: {maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (Web0S; Linux/SmartTV) webOS.TV-2017'},
   location: {search: '?test', protocol: 'file:'},
   localStorage: {getItem: () => null, setItem() {}},
   URLSearchParams, requestAnimationFrame() {},
   console
-}, {filename: 'game.js', timeout: 10000});
+});
+// Simulate browser implementations without modern built-ins.
+vm.runInContext('Object.hasOwn = undefined; String.prototype.padStart = undefined;', legacyContext);
+vm.runInContext(source, legacyContext, {filename: 'game.js', timeout: 10000});
 
 const game = window.__forestTest;
 assert.ok(game, 'test hook is available');
@@ -51,7 +90,115 @@ for (const stage of game.stages) {
   }
 }
 
+// Emulate the numeric key codes supplied by old LG webOS remote controls.
+// In particular, remote events may have no usable KeyboardEvent.code.
+function sendRemote(type, keyCode, repeat = false) {
+  const listener = documentHandlers.get(type);
+  assert.ok(listener, type + ' listener is registered');
+  let prevented = false;
+  listener({
+    keyCode, which: keyCode, code: 'Unidentified', repeat,
+    preventDefault() { prevented = true; }
+  });
+  return prevented;
+}
+assert.ok(documentClasses.has('tv-browser'), 'webOS browser uses the TV control legend');
+
 game.start();
+assert.ok(sendRemote('keydown', 404), 'green remote key is handled');
+game.updatePlayer(1 / 120);
+assert.ok(game.player.vx < 0 && game.player.vy < 0, 'green combines left with jump');
+sendRemote('keyup', 404);
+
+game.start();
+assert.ok(sendRemote('keydown', 405), 'yellow remote key is handled');
+game.updatePlayer(1 / 120);
+assert.ok(game.player.vx > 0 && game.player.vy < 0, 'yellow combines right with jump');
+sendRemote('keyup', 405);
+
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
+const ammoBeforeRemoteAttack = game.player.ammo;
+assert.ok(sendRemote('keydown', 403), 'red remote key is handled');
+sendRemote('keyup', 403); // A very quick tap, released before any game frame.
+// Newly equipped weapons have a short pickup cooldown. The queued tap must
+// survive that cooldown even when the remote's keyup has already arrived.
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'short red tap fires after pickup');
+game.advance(.5, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'one tap fires only once');
+
+// A red button emitting only keyup should still cause exactly one shot.
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
+sendRemote('keyup', 403);
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'keyup-only remote fires');
+
+// Some old browser events expose the key using "which" instead.
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
+const redHandler = documentHandlers.get('keydown');
+redHandler({
+  keyCode: 0, which: 403, code: 'Unidentified', repeat: false,
+  preventDefault() {}
+});
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'which=403 fires');
+
+// When a focused element swallows the bubbling red key event, a capturing
+// window listener must still queue the shot. Simulate window capture only.
+game.start();
+game.collectLoot({kind: 'bow', life: 1, x: 120, y: 350});
+assert.ok(windowHandlers.get('keydown'), 'TV keydown capture is registered');
+assert.ok(windowHandlers.get('keyup'), 'TV keyup capture is registered');
+windowHandlers.get('keydown')({
+  keyCode:403, which:403, code:'Unidentified', repeat:false, preventDefault() {}
+});
+windowHandlers.get('keyup')({
+  keyCode:403, which:403, code:'Unidentified', repeat:false, preventDefault() {}
+});
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'window capture fires without document bubbling');
+
+// Quick taps during the longest (ice) weapon cooldown are queued for its
+// next ready frame rather than being discarded after a 0.24-second buffer.
+game.start();
+game.collectLoot({kind:'ice', life:1, x:120, y:350});
+game.advance(.2, false);
+sendRemote('keydown',403);
+sendRemote('keyup',403);
+game.advance(.1, false);
+const beforeQueuedAttack = game.stats.shots;
+sendRemote('keydown',403);
+sendRemote('keyup',403);
+game.advance(.85, false);
+assert.equal(game.stats.shots, beforeQueuedAttack + 1, 'remote attack waits for ice cooldown');
+
+// TV Down is a reliable fallback when the browser reserves red.
+game.start();
+game.collectLoot({kind:'bow', life:1, x:120, y:350});
+sendRemote('keydown',40);
+sendRemote('keyup',40);
+game.advance(.2, false);
+assert.equal(game.player.ammo, ammoBeforeRemoteAttack - 1, 'TV down fires as fallback');
+
+assert.ok(sendRemote('keydown', 406), 'blue remote key is handled');
+assert.equal(game.state, 'paused', 'blue pauses the game');
+sendRemote('keydown', 406, true);
+assert.equal(game.state, 'paused', 'repeating blue does not instantly unpause');
+sendRemote('keyup', 406);
+sendRemote('keydown', 406);
+assert.equal(game.state, 'playing', 'blue resumes the game');
+sendRemote('keyup', 406);
+
+game.start();
+// Picking up any of the four offensive power-ups must not freeze the game.
+for (const weapon of ['bow', 'fire', 'ice', 'sword']) {
+  game.collectLoot({kind: weapon, life: 1, x: 120, y: 350});
+  assert.equal(game.player.weapon, weapon);
+}
+assert.equal(game.player.ammo, 12, 'the bow still provides its initial ammunition');
 game.collectLoot({kind: 'cat', life: 1, x: 120, y: 350});
 assert.ok(game.companion);
 assert.equal(game.catLives, 7);
@@ -98,4 +245,38 @@ game.collectLoot({kind: 'cat', life: 1, x: 120, y: 350});
 assert.ok(game.companion);
 assert.equal(game.catLives, 7, 'finding Lucek again refills lives');
 
-console.log('Elf hazard and Lucek life checks passed');
+// Pause and game-over dialogs have no stats; completion dialogs show three.
+// Exercise all of them without supplying modern DOM APIs in the fixture.
+game.start();
+const modalStats = element('modalStats');
+element('pauseBtn').click();
+assert.equal(game.state, 'paused');
+assert.equal(element('modalScreen').hidden, false);
+assert.equal(modalStats.children.length, 0, 'pause dialog has no stats');
+element('modalPrimary').click();
+assert.equal(game.state, 'playing', 'resume from pause');
+
+for (let i = 0; i < 3; i++) game.hurtPlayer(true);
+assert.equal(game.state, 'gameover');
+assert.equal(modalStats.children.length, 0, 'death dialog has no stats');
+element('modalPrimary').click();
+assert.equal(game.state, 'playing', 'resume after death');
+
+game.finishStage();
+assert.equal(game.state, 'stageclear');
+assert.equal(modalStats.children.length, 3, 'stage completion renders three stats');
+for (const entry of modalStats.children) {
+  assert.equal(entry.children.length, 2, 'each stat has a number and a caption');
+}
+const previousStat = modalStats.firstChild;
+element('modalPrimary').click();
+assert.equal(game.state, 'playing', 'advance to next stage');
+game.finishStage();
+assert.equal(modalStats.children.length, 3, 'next stage replaces stats instead of duplicating them');
+assert.notEqual(modalStats.firstChild, previousStat, 'previous stats were removed');
+game.load(9);
+game.finishStage();
+assert.equal(game.state, 'win');
+assert.equal(modalStats.children.length, 3, 'final results render correctly');
+
+console.log('Elf weapon, hazard, Lucek and legacy modal checks passed');
