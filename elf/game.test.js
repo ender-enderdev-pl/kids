@@ -31,13 +31,24 @@ const document = {
   addEventListener() {}
 };
 const source = fs.readFileSync(path.join(__dirname, 'game.js'), 'utf8');
-vm.runInNewContext(source, {
+const workerSource = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
+const cssSource = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
+// Chromium 53 must parse the complete scripts before any animation can start.
+assert.doesNotMatch(source, /Object\.hasOwn\(|\.padStart\(|\?\.(?=[A-Za-z_$\[])/);
+assert.doesNotMatch(source, /\?\?(?!\?)/);
+assert.doesNotMatch(source, /\basync\s+function\b/);
+assert.doesNotMatch(workerSource, /\basync\b|\bawait\b/);
+assert.doesNotMatch(source + cssSource, /#[0-9a-fA-F]{8}\b/);
+const legacyContext = vm.createContext({
   window, document, navigator: {maxTouchPoints: 0},
   location: {search: '?test', protocol: 'file:'},
   localStorage: {getItem: () => null, setItem() {}},
   URLSearchParams, requestAnimationFrame() {},
   console
-}, {filename: 'game.js', timeout: 10000});
+});
+// Simulate browser implementations without modern built-ins.
+vm.runInContext('Object.hasOwn = undefined; String.prototype.padStart = undefined;', legacyContext);
+vm.runInContext(source, legacyContext, {filename: 'game.js', timeout: 10000});
 
 const game = window.__forestTest;
 assert.ok(game, 'test hook is available');
@@ -52,6 +63,12 @@ for (const stage of game.stages) {
 }
 
 game.start();
+// Picking up any of the four offensive power-ups must not freeze the game.
+for (const weapon of ['bow', 'fire', 'ice', 'sword']) {
+  game.collectLoot({kind: weapon, life: 1, x: 120, y: 350});
+  assert.equal(game.player.weapon, weapon);
+}
+assert.equal(game.player.ammo, 12, 'the bow still provides its initial ammunition');
 game.collectLoot({kind: 'cat', life: 1, x: 120, y: 350});
 assert.ok(game.companion);
 assert.equal(game.catLives, 7);

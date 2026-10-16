@@ -496,11 +496,16 @@ function toggleSound() {
   if(state==='playing') frame.focus({preventScroll:true});
 }
 
-async function toggleFullscreen() {
+function toggleFullscreen() {
   try {
-    if(document.fullscreenElement) await document.exitFullscreen();
-    else if(frame.requestFullscreen) await frame.requestFullscreen();
-    else showToast('Obróć telefon poziomo, aby powiększyć widok.');
+    // Legacy webOS may return undefined rather than a Promise for fullscreen.
+    let operation;
+    if (document.fullscreenElement && document.exitFullscreen) operation = document.exitFullscreen();
+    else if (frame.requestFullscreen) operation = frame.requestFullscreen();
+    else { showToast('Obróć telefon poziomo, aby powiększyć widok.'); return; }
+    if (operation && typeof operation.catch === 'function') {
+      operation.catch(() => showToast('Pełny ekran jest niedostępny w tej przeglądarce.'));
+    }
   } catch (_) { showToast('Pełny ekran jest niedostępny w tej przeglądarce.'); }
 }
 
@@ -728,7 +733,7 @@ function collectLoot(item,byCat=false) {
   item.life=0;
   if (byCat) stats.catFinds++;
   const prefix=byCat?'Lucek przynosi: ':'';
-  if (Object.hasOwn(WEAPONS,item.kind)) {
+  if (Object.prototype.hasOwnProperty.call(WEAPONS,item.kind)) {
     const previous=player.weapon;
     player.weapon=item.kind;
     if (item.kind==='bow') player.ammo=Math.min(MAX_ARROWS,player.ammo+ARROWS_PER_BOW);
@@ -1145,7 +1150,7 @@ function recallCompanion() {
   const ground=level.solids.filter(s=>s.type==='ground' && s.x+s.w-companion.w>=Math.max(s.x,camera+4));
   const nearest=ground.map(s=>clamp(desired,Math.max(s.x,camera+4),s.x+s.w-companion.w))
     .sort((a,b)=>Math.abs(a-desired)-Math.abs(b-desired))[0];
-  companion.x=nearest ?? desired;
+  companion.x=nearest == null ? desired : nearest;
   companion.y=GROUND-companion.h-12;
   companion.vx=companion.vy=0;
   companion.pounce=0;
@@ -1297,7 +1302,7 @@ function updateHUD() {
   const key=[stageIndex,stats.coins,player.health,player.weapon,player.ammo,!!companion,catLives].join('|');
   if (key===lastHudKey) return;
   lastHudKey=key;
-  $('stageNum').textContent=String(stageIndex+1).padStart(2,'0');
+  $('stageNum').textContent=('0'+(stageIndex+1)).slice(-2);
   $('stageName').textContent=STAGES[stageIndex].name;
   $('stageTotal').textContent=`/ ${STAGES.length}`;
   $('coinCount').textContent=String(stats.coins);
@@ -1314,7 +1319,7 @@ function updateHUD() {
   $('weaponName').textContent=weapon?weapon.short:'BROŃ';
   $('weaponAmmo').textContent=weapon?(player.weapon==='bow'?String(player.ammo):'∞'):'—';
   $('weaponIcon').innerHTML=WEAPON_ICONS[player.weapon || 'none'];
-  $('weaponHud').style.color=weapon?.color || '#d9e1bf';
+  $('weaponHud').style.color=(weapon && weapon.color) || '#d9e1bf';
   $('shootTouch').classList.toggle('unavailable',!available);
   $('shootTouch').setAttribute('aria-label',weapon?'Atak: '+weapon.label:'Atak — najpierw zdobądź broń');
   $('attackTouchIcon').innerHTML=WEAPON_ICONS[player.weapon || 'sword'];
@@ -1529,7 +1534,7 @@ function drawTerrain(solid) {
       const ww=16+r()*17;
       const hh=9+r()*13;
       pixelBlob(ctx,xx,yy,ww,hh,r()>.55?p.earthDark:'#92704d');
-      rect(ctx,xx+4,yy+2,ww-8,2,'#b796653b');
+      rect(ctx,xx+4,yy+2,ww-8,2,'rgba(183,150,101,0.2314)');
       if(r()>.65) rect(ctx,xx+23,yy+20,4,3,p.earthDark);
     }
   }
@@ -1641,10 +1646,10 @@ function drawBlock(block) {
       rect(ctx,x+11+col*3,y+8+row*3,3,3,'#fff0ba');
     }
     if(special) {
-      rect(ctx,x+11,y+34,18,2,WEAPONS[block.content]?.color || (block.content==='cat'?'#35443d':'#e5dfbd'));
+      rect(ctx,x+11,y+34,18,2,(WEAPONS[block.content] && WEAPONS[block.content].color) || (block.content==='cat'?'#35443d':'#e5dfbd'));
       const glint=REDUCED_MOTION?1:Math.sin(worldTime*4)*.3+.7;
       ctx.globalAlpha=glint;
-      drawSpark(x+36,y-7,4,WEAPONS[block.content]?.color || '#fff3bf');
+      drawSpark(x+36,y-7,4,(WEAPONS[block.content] && WEAPONS[block.content].color) || '#fff3bf');
       ctx.globalAlpha=1;
     }
   }
@@ -1781,7 +1786,7 @@ function drawLoot(item) {
   const x=item.x-camera;
   if (x<-60 || x>viewWidth+60) return;
   const y=item.y+(REDUCED_MOTION?0:Math.sin(worldTime*5)*2);
-  const color=WEAPONS[item.kind]?.color || (item.kind==='cat'?'#f1deb1':'#e7f0b4');
+  const color=(WEAPONS[item.kind] && WEAPONS[item.kind].color) || (item.kind==='cat'?'#f1deb1':'#e7f0b4');
   ctx.globalAlpha=.19;pixelBlob(ctx,x-8,y-7,43,42,color);ctx.globalAlpha=1;
   if (item.kind==='bow') drawBow(x+5,y+14,1.1,true);
   else if (item.kind==='fire') drawFlame(x+12,y+13,.93);
@@ -1890,7 +1895,7 @@ function drawEnemy(enemy) {
   ctx.translate(0,-enemy.h);
   const bob=enemy.alive?Math.round(Math.sin(enemy.phase)*1):0;
   const leg=Math.sin(enemy.phase)>0?1:0;
-  rect(ctx,5,25,28,4,'#243d353b');
+  rect(ctx,5,25,28,4,'rgba(36,61,53,0.2314)');
   if(enemy.kind==='mushroom') {
     rect(ctx,8,20,9,7+leg,'#3b4c34');rect(ctx,24,20,9,8-leg,'#3b4c34');
     pixelBlob(ctx,9,9+bob,24,15,'#ddd7a7');
@@ -2191,7 +2196,7 @@ function render() {
   // The bottom edge gets a subtle vignette, while the collision surface
   // remains crisp and readable above it.
   const shade=ctx.createLinearGradient(0,475,0,540);
-  shade.addColorStop(0,'#16362900');shade.addColorStop(1,'#1636293b');
+  shade.addColorStop(0,'rgba(22,54,41,0)');shade.addColorStop(1,'rgba(22,54,41,0.2314)');
   ctx.fillStyle=shade;ctx.fillRect(0,475,viewWidth,65);
   ctx.restore();
 }
@@ -2215,16 +2220,28 @@ function resize() {
 let lastTimestamp=0;
 let accumulator=0;
 let manualClock=false;
+let runtimeFailed = false;
 function loop(timestamp) {
-  const dt=lastTimestamp?Math.min((timestamp-lastTimestamp)/1000,.1):0;
-  lastTimestamp=timestamp;
-  if(!manualClock) {
-    accumulator+=dt;
-    let steps=0;
-    while(accumulator>=FIXED_STEP && steps<12) {update(FIXED_STEP);accumulator-=FIXED_STEP;steps++;}
-    if(steps>=12)accumulator=0;
+  if (runtimeFailed) return;
+  try {
+    const dt=lastTimestamp?Math.min((timestamp-lastTimestamp)/1000,.1):0;
+    lastTimestamp=timestamp;
+    if (!manualClock) {
+      accumulator+=dt;
+      let steps=0;
+      while(accumulator>=FIXED_STEP && steps<12) {update(FIXED_STEP);accumulator-=FIXED_STEP;steps++;}
+      if (steps>=12) accumulator=0;
+    }
+    render();
+  } catch (error) {
+    // Surface runtime faults on televisions that have no convenient console.
+    runtimeFailed = true;
+    console.error('Elf runtime error:',error);
+    const warning = $('toast');
+    warning.textContent = 'Błąd gry: ' + (error && error.message ? error.message : String(error));
+    warning.classList.add('show');
+    return;
   }
-  render();
   requestAnimationFrame(loop);
 }
 
