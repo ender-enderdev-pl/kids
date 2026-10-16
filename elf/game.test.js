@@ -12,13 +12,34 @@ const canvasContext = new Proxy({}, {
 });
 const elements = new Map();
 function element(id) {
-  if (!elements.has(id)) elements.set(id, {
-    style: {}, hidden: false, textContent: '', innerHTML: '',
-    classList: {add() {}, remove() {}, toggle() {}},
-    addEventListener() {}, setAttribute() {}, replaceChildren() {}, append() {}, focus() {},
-    getBoundingClientRect() { return {width: 960, height: 540}; },
-    getContext() { return canvasContext; }
-  });
+  if (!elements.has(id)) {
+    // Only expose APIs supported by Chromium 53; do not stub modern append()
+    // or replaceChildren(), so incompatible dialogs fail this regression test.
+    const children = [];
+    const listeners = new Map();
+    elements.set(id, {
+      children, listeners,
+      style: {}, hidden: false, textContent: '', innerHTML: '',
+      get firstChild() { return children.length ? children[0] : null; },
+      appendChild(child) { children.push(child); return child; },
+      removeChild(child) {
+        const index = children.indexOf(child);
+        assert.notEqual(index, -1, 'removed node must be a child');
+        children.splice(index, 1);
+        return child;
+      },
+      classList: {add() {}, remove() {}, toggle() {}},
+      addEventListener(type, listener) { listeners.set(type, listener); },
+      click() {
+        const listener = listeners.get('click');
+        assert.ok(listener, 'click handler is registered');
+        listener();
+      },
+      setAttribute() {}, focus() {},
+      getBoundingClientRect() { return {width: 960, height: 540}; },
+      getContext() { return canvasContext; }
+    });
+  }
   return elements.get(id);
 }
 
@@ -31,13 +52,27 @@ const document = {
   addEventListener() {}
 };
 const source = fs.readFileSync(path.join(__dirname, 'game.js'), 'utf8');
-vm.runInNewContext(source, {
+const workerSource = fs.readFileSync(path.join(__dirname, 'sw.js'), 'utf8');
+const cssSource = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
+// Chromium 53 must parse the complete scripts before any animation can start.
+assert.doesNotMatch(source, /Object\.hasOwn\(|\.padStart\(|\?\.(?=[A-Za-z_$\[])/);
+assert.doesNotMatch(source, /\?\?(?!\?)/);
+assert.doesNotMatch(source, /\basync\s+function\b/);
+assert.doesNotMatch(workerSource, /\basync\b|\bawait\b/);
+assert.doesNotMatch(source + cssSource, /#[0-9a-fA-F]{8}\b/);
+assert.doesNotMatch(source, /\.replaceChildren\(|\.append\(/);
+assert.equal(typeof element('modalStats').replaceChildren, 'undefined');
+assert.equal(typeof element('modalStats').append, 'undefined');
+const legacyContext = vm.createContext({
   window, document, navigator: {maxTouchPoints: 0},
   location: {search: '?test', protocol: 'file:'},
   localStorage: {getItem: () => null, setItem() {}},
   URLSearchParams, requestAnimationFrame() {},
   console
-}, {filename: 'game.js', timeout: 10000});
+});
+// Simulate browser implementations without modern built-ins.
+vm.runInContext('Object.hasOwn = undefined; String.prototype.padStart = undefined;', legacyContext);
+vm.runInContext(source, legacyContext, {filename: 'game.js', timeout: 10000});
 
 const game = window.__forestTest;
 assert.ok(game, 'test hook is available');
@@ -52,6 +87,12 @@ for (const stage of game.stages) {
 }
 
 game.start();
+// Picking up any of the four offensive power-ups must not freeze the game.
+for (const weapon of ['bow', 'fire', 'ice', 'sword']) {
+  game.collectLoot({kind: weapon, life: 1, x: 120, y: 350});
+  assert.equal(game.player.weapon, weapon);
+}
+assert.equal(game.player.ammo, 12, 'the bow still provides its initial ammunition');
 game.collectLoot({kind: 'cat', life: 1, x: 120, y: 350});
 assert.ok(game.companion);
 assert.equal(game.catLives, 7);
@@ -98,4 +139,38 @@ game.collectLoot({kind: 'cat', life: 1, x: 120, y: 350});
 assert.ok(game.companion);
 assert.equal(game.catLives, 7, 'finding Lucek again refills lives');
 
-console.log('Elf hazard and Lucek life checks passed');
+// Pause and game-over dialogs have no stats; completion dialogs show three.
+// Exercise all of them without supplying modern DOM APIs in the fixture.
+game.start();
+const modalStats = element('modalStats');
+element('pauseBtn').click();
+assert.equal(game.state, 'paused');
+assert.equal(element('modalScreen').hidden, false);
+assert.equal(modalStats.children.length, 0, 'pause dialog has no stats');
+element('modalPrimary').click();
+assert.equal(game.state, 'playing', 'resume from pause');
+
+for (let i = 0; i < 3; i++) game.hurtPlayer(true);
+assert.equal(game.state, 'gameover');
+assert.equal(modalStats.children.length, 0, 'death dialog has no stats');
+element('modalPrimary').click();
+assert.equal(game.state, 'playing', 'resume after death');
+
+game.finishStage();
+assert.equal(game.state, 'stageclear');
+assert.equal(modalStats.children.length, 3, 'stage completion renders three stats');
+for (const entry of modalStats.children) {
+  assert.equal(entry.children.length, 2, 'each stat has a number and a caption');
+}
+const previousStat = modalStats.firstChild;
+element('modalPrimary').click();
+assert.equal(game.state, 'playing', 'advance to next stage');
+game.finishStage();
+assert.equal(modalStats.children.length, 3, 'next stage replaces stats instead of duplicating them');
+assert.notEqual(modalStats.firstChild, previousStat, 'previous stats were removed');
+game.load(9);
+game.finishStage();
+assert.equal(game.state, 'win');
+assert.equal(modalStats.children.length, 3, 'final results render correctly');
+
+console.log('Elf weapon, hazard, Lucek and legacy modal checks passed');
