@@ -128,3 +128,12 @@ kbd{display:inline-flex;justify-content:center;align-items:center;height:28px;mi
 }
 @media(max-height:540px) and (orientation:landscape){.field-guide{display:none}.touch-controls{display:flex}.modal-screen{padding:20px}.stage-total{font-size:8px}.modal-card p{font-size:10px}.guide-title{display:none}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* Installed mobile apps use the manifest display mode, without the Fullscreen API hint. */
+@media (display-mode: fullscreen), (display-mode: standalone) and (pointer: coarse){
+  .shell{max-width:none;padding:0}
+  .topbar,.legend,.field-guide,.bottomline{display:none}
+  .game-frame{width:100vw;height:100dvh;max-height:none;aspect-ratio:auto;margin:0;border-radius:0;box-shadow:none}
+  .hud{top:max(11px,env(safe-area-inset-top));left:max(11px,env(safe-area-inset-left));right:max(11px,env(safe-area-inset-right))}
+  .touch-controls{bottom:max(13px,env(safe-area-inset-bottom));left:max(13px,env(safe-area-inset-left));right:max(13px,env(safe-area-inset-right))}
+}

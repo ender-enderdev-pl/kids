@@ -499,6 +499,11 @@ function toggleSound() {
 async function toggleFullscreen() {
   try {
     if(document.fullscreenElement) await document.exitFullscreen();
+    // An installed PWA already owns the screen. Requesting the Fullscreen API
+    // again makes Chrome cover the touch controls with its exit hint.
+    else if(window.matchMedia('(display-mode: fullscreen)').matches ||
+      ((window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) &&
+        (navigator.maxTouchPoints > 0 || 'ontouchstart' in window))) return;
     else if(frame.requestFullscreen) await frame.requestFullscreen();
     else showToast('Obróć telefon poziomo, aby powiększyć widok.');
   } catch (_) { showToast('Pełny ekran jest niedostępny w tej przeglądarce.'); }
