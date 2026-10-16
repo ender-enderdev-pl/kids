@@ -6,7 +6,7 @@
   "id": "./elf.html",
   "start_url": "./elf.html",
   "scope": "./",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#163c32",
   "theme_color": "#163c32",
   "icons": [

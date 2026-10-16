@@ -611,6 +611,7 @@ $('startBtn').addEventListener('click',startRun);
 $('pauseBtn').addEventListener('click',togglePause);
 $('touchPause').addEventListener('click',togglePause);
 $('soundBtn').addEventListener('click',toggleSound);
+$('touchSound').addEventListener('click',toggleSound);
 $('fullBtn').addEventListener('click',toggleFullscreen);
 $('modalPrimary').addEventListener('click', () => { if(primaryAction) primaryAction(); });
 $('modalSecondary').addEventListener('click', () => { if(secondaryAction) secondaryAction(); });
@@ -618,6 +619,7 @@ $('modalSecondary').addEventListener('click', () => { if(secondaryAction) second
 function toggleSound() {
   soundEnabled=!soundEnabled;
   $('soundBtn').setAttribute('aria-pressed',String(soundEnabled));
+  $('touchSound').setAttribute('aria-pressed',String(soundEnabled));
   if(soundEnabled) unlockAudio();
   if(audioMaster && audio) audioMaster.gain.setTargetAtTime(soundEnabled?.5:0,audio.currentTime,.02);
   if(state==='playing') frame.focus({preventScroll:true});
@@ -628,6 +630,11 @@ function toggleFullscreen() {
     // Legacy webOS may return undefined rather than a Promise for fullscreen.
     let operation;
     if (document.fullscreenElement && document.exitFullscreen) operation = document.exitFullscreen();
+    // Installed mobile apps already use the available screen. A second
+    // fullscreen request displays Chrome's hint over the touch controls.
+    else if (window.matchMedia('(display-mode: fullscreen)').matches ||
+        ((window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) &&
+        (navigator.maxTouchPoints > 0 || 'ontouchstart' in window))) return;
     else if (frame.requestFullscreen) operation = frame.requestFullscreen();
     else { showToast('Obróć telefon poziomo, aby powiększyć widok.'); return; }
     if (operation && typeof operation.catch === 'function') {
