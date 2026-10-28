@@ -67,3 +67,21 @@ h1 em{color:#51775e;font-weight:400}
 @media(max-width:900px){.hero{grid-template-columns:1fr}.hero-copy{padding:55px 45px}.hero-art{min-height:310px}.game-grid{grid-template-columns:1fr}.game-card{max-width:650px}}
 @media(max-width:580px){.page{padding:0 18px}.site-header{height:auto;min-height:76px;flex-wrap:wrap;padding:14px 0;row-gap:5px}.brand{font-size:15px}.brand-mark{width:32px;height:32px;font-size:23px}.site-header nav{gap:16px;font-size:12px;margin-left:auto}.hero{border-radius:18px}.hero-copy{padding:40px 27px 43px}.hero-description{font-size:14px}h1{letter-spacing:-2px;margin:16px 0}.hero-art{min-height:235px}.moon{width:150px;height:150px}.tree-one{left:22%;transform:scale(.8)}.tree-two{left:67%;transform:scale(.58)}.tree-three{left:92%;transform:scale(.95)}.art-label{font-size:8px;bottom:15px;right:17px}.games-section{padding:70px 0}.section-heading{display:block}.section-heading>p{margin-top:14px}.game-cover{min-height:260px}.game-details{padding:22px;align-items:start}.game-details h3{font-size:31px}.play-link{font-size:12px}.about-section{gap:18px;padding:36px 0}.about-symbol{font-size:40px}.about-section h2{font-size:29px}.site-footer{font-size:10px;flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.hero-button,.game-card,.game-cover img{transition:none}}
+.privacy-main{padding:58px 0 96px}
+.privacy-heading{max-width:820px;margin-bottom:55px}
+.privacy-heading h1{font-size:clamp(42px,5vw,66px);letter-spacing:-2.5px;margin:16px 0 18px}
+.privacy-heading>p:not(.section-kicker){font-size:16px;line-height:1.7;color:var(--muted);margin-bottom:13px}
+.privacy-heading .privacy-date{font-size:12px!important;font-weight:700;letter-spacing:.3px}
+.privacy-layout{display:grid;grid-template-columns:minmax(240px,310px) minmax(0,1fr);gap:clamp(38px,6vw,88px);align-items:start}
+.privacy-summary{padding:30px;border-radius:18px;background:#e6e9d9;border:1px solid var(--line)}
+.privacy-summary-icon{display:block;color:#b99551;font-size:44px;line-height:1;margin-bottom:19px}
+.privacy-summary h2{font-size:27px;font-weight:400;margin-bottom:12px}
+.privacy-summary p,.privacy-content p{font-size:14px;line-height:1.85;color:#50675a}
+.privacy-summary a{display:inline-block;margin-top:8px;font-size:13px;font-weight:800;color:#2e6548}
+.privacy-content section{border-top:1px solid var(--line);padding:28px 0 24px}
+.privacy-content section:first-child{padding-top:0;border-top:0}
+.privacy-content h2{font-size:27px;font-weight:400;letter-spacing:-.5px;margin-bottom:13px}
+.privacy-content p{margin-bottom:13px}
+.privacy-content a{text-decoration:underline;text-underline-offset:3px;color:#2e6548}
+.privacy-content code{font-size:.95em;background:#e7eadf;padding:2px 5px;border-radius:4px}
+@media(max-width:760px){.privacy-layout{grid-template-columns:1fr}.privacy-main{padding:35px 0 65px}.privacy-heading{margin-bottom:35px}.privacy-summary{max-width:520px}.privacy-content h2{font-size:24px}}
